@@ -1,6 +1,6 @@
-# Hawks Practice Predictor
+# Hawks Golf Practice Predictor
 
-A parent-friendly, heat-based outdoor practice predictor for Rockwall-Heath Hawks families.
+A parent-friendly, heat-based golf practice predictor for Rockwall-Heath girls golf families.
 
 **Live site:** [hawks-practice-predictor.netlify.app](https://hawks-practice-predictor.netlify.app)
 

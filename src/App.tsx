@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, Cloud, CloudLightning, CloudRain, CloudSun, Database, Droplets, ExternalLink, Gauge, MapPin, RefreshCw, ShieldCheck, Sun, Wind } from 'lucide-react'
+import { CheckCircle2, CircleAlert, Cloud, CloudLightning, CloudRain, CloudSun, Database, Droplets, ExternalLink, Fan, Gauge, GlassWater, MapPin, RefreshCw, ShieldCheck, Shirt, Snowflake, Sun, Wind } from 'lucide-react'
 import WeatherBackdrop from './WeatherBackdrop'
 const ZIP_CODE = '75032'
 const TIME_ZONE = 'America/Chicago'
@@ -64,11 +64,11 @@ const FLAG_META: Record<Flag, { name: string; color: string; verdict: string; in
   },
   orange: {
     name: 'More breaks', color: '#F47B35', verdict: 'YES.', instruction: 'Practice is heat-permitted with major modifications.',
-    rules: ['2-hour maximum', 'Football: helmet, shoulder pads and shorts only', 'All sports: 4 breaks/hour · 4 minutes each', 'Onsite rapid-cooling zone required'],
+    rules: ['2-hour maximum', 'At least 4 breaks/hour · 4 minutes each', 'Onsite rapid-cooling zone required'],
   },
   red: {
     name: 'Strict limits', color: '#C8102E', verdict: 'YES.', instruction: 'Practice is heat-permitted only under strict limits.',
-    rules: ['1-hour maximum', 'Football: no protective equipment or conditioning', 'All sports: 20 minutes of rest during the hour', 'Onsite rapid-cooling zone required'],
+    rules: ['1-hour maximum', '20 minutes of rest distributed through the hour', 'Onsite rapid-cooling zone required'],
   },
   black: {
     name: 'No practice', color: '#111111', verdict: 'NO.', instruction: 'No outdoor workouts under the UIL heat plan.',
@@ -79,8 +79,8 @@ const FLAG_META: Record<Flag, { name: string; color: string; verdict: string; in
 const THRESHOLDS = [
   { flag: 'Normal practice', range: '< 82.0°', color: '#39A96B', note: '3 breaks/hour · 3 minutes each' },
   { flag: 'Heat watch', range: '82.0–86.9°', color: '#F3C74F', note: '3 breaks/hour · 4 minutes each · cooling zone' },
-  { flag: 'More breaks', range: '87.0–90.0°', color: '#F47B35', note: '2-hour max · 4 breaks/hour · football gear limits' },
-  { flag: 'Strict limits', range: '90.1–92.0°', color: '#C8102E', note: '1-hour max · 20 minutes rest · no football protective gear or conditioning' },
+  { flag: 'More breaks', range: '87.0–90.0°', color: '#F47B35', note: '2-hour max · 4 breaks/hour · 4 minutes each' },
+  { flag: 'Strict limits', range: '90.1–92.0°', color: '#C8102E', note: '1-hour max · 20 minutes of rest during the hour' },
   { flag: 'No practice', range: '≥ 92.1°', color: '#111111', note: 'Cancel or move indoors' },
 ]
 
@@ -192,7 +192,7 @@ function predictionReason(outlook: Outlook | null) {
   return `YES — the predicted WBGT is ${outlook.wbgt.toFixed(1)}°F, ${(92.1 - outlook.wbgt).toFixed(1)}° below the 92.1°F UIL limit.`
 }
 
-function DecisionMeter({ wbgt }: { wbgt: number | null }) {
+function DecisionMeter({ wbgt, day }: { wbgt: number | null; day: string }) {
   const minimum = 78
   const maximum = 96
   const cancellation = 92.1
@@ -211,23 +211,31 @@ function DecisionMeter({ wbgt }: { wbgt: number | null }) {
           : `${margin.toFixed(1)}°F below the UIL WBGT limit`
 
   return (
-    <div className="mt-5 border-y border-white/15 py-4">
-      <div className="flex items-end justify-between gap-5">
-        <div>
-          <div className="text-[9px] font-semibold tracking-[0.13em] text-white/45">HOW CLOSE IS THE WBGT?</div>
-          <div className="mt-1 text-sm font-semibold">{message}</div>
+    <div className="rounded-[1.75rem] border border-white/25 bg-black/55 p-5 shadow-2xl backdrop-blur-xl sm:p-7 lg:p-8">
+      <div className="grid gap-6 md:grid-cols-12 md:items-end">
+        <div className="md:col-span-5">
+          <div className="text-[10px] font-semibold tracking-[0.13em] text-[#f0a9b7]">THE DECISION METER · {day.toUpperCase()} AROUND 3 PM</div>
+          <h2 className="mt-3 text-[clamp(2rem,4vw,4rem)] font-medium leading-[0.9] tracking-[-0.055em]">HOW CLOSE ARE WE<br />TO NO PRACTICE?</h2>
         </div>
-        <div className="max-w-[9rem] shrink-0 text-right text-[9px] leading-3 text-white/45">UIL NO-OUTDOOR LIMIT<br /><strong className="text-sm text-white">92.1°F WBGT</strong></div>
+        <div className="md:col-span-3 md:border-l md:border-white/15 md:pl-6">
+          <div className="text-[9px] font-semibold tracking-[0.12em] text-white/45">NWS PREDICTED WBGT</div>
+          <div className="mt-2 text-5xl font-medium tracking-[-0.06em] sm:text-6xl">{wbgt?.toFixed(1) ?? '—'}°</div>
+        </div>
+        <div className="md:col-span-4 md:text-right">
+          <div className="text-[9px] font-semibold tracking-[0.12em] text-white/45">DISTANCE FROM UIL LIMIT</div>
+          <div className="mt-2 text-xl font-semibold sm:text-2xl">{message}</div>
+        </div>
       </div>
-      <div className="relative mt-5 h-2 bg-white/20">
+      <div className="relative mt-10 h-3 bg-white/25" role="img" aria-label={`Predicted WBGT ${wbgt?.toFixed(1) ?? 'unavailable'} degrees; no outdoor practice limit 92.1 degrees WBGT`}>
         <div className="absolute inset-y-0 right-0 bg-hawk/80" style={{ left: `${line}%` }} />
-        <div className="absolute -bottom-2 -top-2 w-px bg-white" style={{ left: `${line}%` }} />
-        <div className="absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-hawk shadow-[0_0_18px_rgba(200,16,46,.8)]" style={{ left: `${marker}%` }} />
+        <div className="absolute -bottom-3 -top-3 w-px bg-white" style={{ left: `${line}%` }} />
+        <div className="absolute top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-white bg-hawk shadow-[0_0_24px_rgba(200,16,46,.9)]" style={{ left: `${marker}%` }} />
       </div>
-      <div className="mt-2 flex justify-between text-[9px] font-medium tracking-[0.08em] text-white/40">
-        <span>HEAT-PERMITTED</span>
-        <span>NO OUTDOOR PRACTICE</span>
+      <div className="mt-4 flex justify-between gap-6 text-[9px] font-semibold tracking-[0.08em] text-white/50">
+        <span>HEAT-PERMITTED SIDE OF UIL LINE</span>
+        <span className="text-right">92.1°F WBGT · NO OUTDOOR PRACTICE</span>
       </div>
+      <div className="mt-6 flex flex-wrap gap-x-6 gap-y-2 border-t border-white/15 pt-4 text-[10px] text-white/50"><span><strong className="text-white">WBGT</strong> is not air temperature</span><span><strong className="text-white">NWS</strong> predicts the WBGT</span><span><strong className="text-white">UIL</strong> sets the limits</span><span><strong className="text-white">The school</strong> confirms the field reading</span></div>
     </div>
   )
 }
@@ -401,8 +409,9 @@ export default function App() {
           </div>
         </header>
 
-        <div className="relative z-10 mx-auto grid w-full max-w-[1600px] gap-7 pb-8 pt-8 sm:pt-10 lg:grid-cols-12 lg:pb-10">
-          <div className="lg:col-span-8" style={{ transform: `translate3d(0, ${-heroShift * 0.26}px, 0)` }}>
+        <div className="relative z-10 mx-auto w-full max-w-[1600px] pb-8 pt-8 sm:pt-10 lg:pb-10">
+          <div className="grid gap-7 lg:grid-cols-12 lg:items-end" style={{ transform: `translate3d(0, ${-heroShift * 0.18}px, 0)` }}>
+            <div className="lg:col-span-8">
             <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] font-semibold tracking-[0.1em] text-white/75 md:hidden">
               <span className="flex items-center gap-1.5"><MapPin className="h-3 w-3" /> HEATH · 75032</span>
               <span>NWS {weather?.office ?? 'FWD'} · UPDATED {updated}</span>
@@ -418,64 +427,63 @@ export default function App() {
               <div className="text-[clamp(7rem,15vw,13.5rem)] font-bold leading-[0.64] tracking-[-0.09em] text-white drop-shadow-[0_4px_25px_rgba(0,0,0,0.32)]">
                 {loading ? '…' : error ? 'CHECK.' : status?.verdict ?? '—'}
               </div>
-              <div className="max-w-sm border-l-2 pb-1 pl-4" style={{ borderColor: accent }}>
-                <p className="text-base font-semibold leading-5">{error ?? predictionReason(selected)}</p>
-                {status && <p className="mt-2 text-xs leading-4 text-white/70">{status.instruction}</p>}
-                <p className="mt-2 text-[10px] font-medium tracking-[0.06em] text-white/55">PREDICTION ONLY · SCHOOL MAKES THE FINAL CALL</p>
-              </div>
             </div>
-            <div className="mt-7 inline-flex max-w-xl items-start gap-3 rounded-xl border border-white/25 bg-black/45 px-4 py-3 text-xs leading-5 backdrop-blur-md">
+            </div>
+            <div className="lg:col-span-4">
+              <div className="border-l-2 pl-5" style={{ borderColor: accent }}>
+                <p className="text-xl font-semibold leading-6">{error ?? predictionReason(selected)}</p>
+                {status && <p className="mt-3 text-sm leading-5 text-white/70">{status.instruction}</p>}
+              </div>
+              <div className="mt-6 flex max-w-xl items-start gap-3 rounded-xl border border-white/25 bg-black/45 px-4 py-3 text-xs leading-5 text-white/70 backdrop-blur-md">
               <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#f0a9b7]" />
-              <p><strong className="text-white">Not an official practice status.</strong> This predicts the heat restriction from the NWS forecast. Confirm the actual decision with Rockwall-Heath athletics.</p>
+                <p><strong className="text-white">Prediction only.</strong> The school’s reading near practice time determines the official status.</p>
+              </div>
             </div>
           </div>
 
-          <aside className="overflow-hidden rounded-[1.75rem] border border-white/25 bg-black/45 p-5 shadow-2xl backdrop-blur-xl lg:col-span-4 lg:p-6" style={{ transform: `translate3d(0, ${heroShift * 0.16}px, 0)` }}>
-            <div className="grid grid-cols-2 gap-5">
-              <div className="border-r border-white/15 pr-4">
-                <div className="text-[9px] font-semibold tracking-[0.1em] text-white/55">3 PM AIR TEMPERATURE</div>
-                <div className="mt-3 flex items-center gap-3">
-                  <WeatherGlyph condition={selected?.condition ?? 'Sunny'} className="h-9 w-9 text-[#ffd278]" />
-                  <span className="text-5xl font-medium tracking-[-0.06em]">{selected?.temperature?.toFixed(0) ?? '—'}°</span>
-                </div>
-                <div className="mt-2 text-[9px] text-white/40">WEATHER FORECAST</div>
+          <div className="mt-8" style={{ transform: `translate3d(0, ${heroShift * 0.08}px, 0)` }}>
+            <DecisionMeter wbgt={selected?.wbgt ?? null} day={selected?.day ?? 'Today'} />
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-3">
+            <section className="rounded-[1.5rem] border border-white/20 bg-black/50 p-5 backdrop-blur-xl sm:p-6">
+              <div className="flex items-center justify-between gap-4">
+                <div><p className="text-[10px] font-semibold tracking-[0.12em] text-[#f0a9b7]">RIGHT NOW</p><h2 className="mt-2 text-2xl font-medium">Current weather</h2></div>
+                <span className="text-right text-[9px] leading-4 text-white/45">{weather?.observation?.station ?? 'NWS'}<br />AS OF {observationTime}</span>
               </div>
-              <div>
-                <div className="text-[9px] font-semibold tracking-[0.1em] text-white/55">3 PM PREDICTED WBGT</div>
-                <div className="mt-3 text-5xl font-medium tracking-[-0.06em]">{selected?.wbgt?.toFixed(1) ?? '—'}°</div>
-                <div className="mt-2 text-[9px] font-semibold text-[#f0a9b7]">UIL USES THIS NUMBER</div>
+              <div className="mt-6 grid grid-cols-2 border-y border-white/15 py-5">
+                <div><span className="text-[9px] tracking-[0.1em] text-white/45">AIR TEMPERATURE</span><strong className="mt-2 block text-4xl font-medium tracking-[-0.06em]">{weather?.observation?.temperature?.toFixed(0) ?? '—'}°</strong></div>
+                <div className="border-l border-white/15 pl-5"><span className="text-[9px] tracking-[0.1em] text-white/45">ESTIMATED WBGT</span><strong className="mt-2 block text-4xl font-medium tracking-[-0.06em]">{weather?.currentWbgt?.toFixed(1) ?? '—'}°</strong></div>
               </div>
-            </div>
-            <div className="mt-5 rounded-xl border border-[#f0a9b7]/35 bg-[#c8102e]/10 px-4 py-3 text-xs leading-5 text-white/80">
-              <strong className="text-white">These are different measurements.</strong> Air temperature describes the weather. WBGT combines heat, humidity, wind and sun—and WBGT is what UIL compares with 92.1°F.
-            </div>
-            <h2 className="mt-5 text-xl font-medium leading-6">{selected?.condition ?? 'Reading the sky'} · {selected?.day ?? 'Today'} at 3 PM</h2>
-            <p className="mt-2 line-clamp-2 text-xs leading-5 text-white/65">{selected?.detail ?? 'Forecast details will appear when the weather service responds.'}</p>
-            <DecisionMeter wbgt={selected?.wbgt ?? null} />
-            {status && (
-              <div className="mt-4 border-b border-white/15 pb-4">
-                <p className="text-[9px] font-semibold tracking-[0.12em] text-white/45">PREDICTED UIL REQUIREMENTS</p>
-                <ul className="mt-3 grid gap-1.5 text-[11px] leading-4 text-white/75">
-                  {status.rules.map((rule) => <li key={rule} className="flex gap-2"><span aria-hidden="true" className="text-[#f0a9b7]">→</span><span>{rule}</span></li>)}
-                </ul>
+              <div className="mt-5 flex items-center gap-3"><WeatherGlyph condition={weather?.observation?.condition ?? 'Current'} className="h-6 w-6 text-[#ffd278]" /><strong>{weather?.observation?.condition ?? 'Loading conditions'}</strong></div>
+              <div className="mt-5 grid grid-cols-2 text-xs"><div><Droplets className="mb-2 h-4 w-4 text-white/45" /><strong>{weather?.observation?.humidity?.toFixed(0) ?? '—'}%</strong><span className="block text-[9px] text-white/40">HUMIDITY</span></div><div><Wind className="mb-2 h-4 w-4 text-white/45" /><strong>{weather?.observation?.wind?.toFixed(0) ?? '—'} mph</strong><span className="block text-[9px] text-white/40">WIND</span></div></div>
+              <p className="mt-5 text-[10px] leading-4 text-white/45">Air temperature comes from the nearest reporting station. Current WBGT is an NWS grid estimate—not the school sensor.</p>
+            </section>
+
+            <section className="rounded-[1.5rem] border border-white/20 bg-black/50 p-5 backdrop-blur-xl sm:p-6">
+              <div><p className="text-[10px] font-semibold tracking-[0.12em] text-[#f0a9b7]">{selected?.day.toUpperCase() ?? 'TODAY'} · AROUND 3 PM</p><h2 className="mt-2 text-2xl font-medium">NWS forecast</h2></div>
+              <div className="mt-6 grid grid-cols-2 border-y border-white/15 py-5">
+                <div><span className="text-[9px] tracking-[0.1em] text-white/45">AIR TEMPERATURE</span><strong className="mt-2 block text-4xl font-medium tracking-[-0.06em]">{selected?.temperature?.toFixed(0) ?? '—'}°</strong></div>
+                <div className="border-l border-white/15 pl-5"><span className="text-[9px] tracking-[0.1em] text-white/45">PREDICTED WBGT</span><strong className="mt-2 block text-4xl font-medium tracking-[-0.06em]">{selected?.wbgt?.toFixed(1) ?? '—'}°</strong></div>
               </div>
-            )}
-            <div className="mt-4 grid grid-cols-3 text-xs">
+              <div className="mt-5 flex items-center gap-3"><WeatherGlyph condition={selected?.condition ?? 'Sunny'} className="h-6 w-6 text-[#ffd278]" /><strong>{selected?.condition ?? 'Loading forecast'}</strong></div>
+              <p className="mt-3 text-xs leading-5 text-white/65">{selected?.detail ?? 'Forecast details will appear when the weather service responds.'}</p>
+              <div className="mt-5 grid grid-cols-3 border-t border-white/15 pt-5 text-xs">
               <div><Droplets className="mb-2 h-4 w-4 text-white/55" /><strong>{selected?.rainChance.toFixed(0) ?? '—'}%</strong><span className="block text-[10px] text-white/45">RAIN</span></div>
               <div><Gauge className="mb-2 h-4 w-4 text-white/55" /><strong>{selected?.humidity.toFixed(0) ?? '—'}%</strong><span className="block text-[10px] text-white/45">HUMIDITY</span></div>
               <div><Wind className="mb-2 h-4 w-4 text-white/55" /><strong>{selected?.wind ?? '—'}</strong><span className="block text-[10px] text-white/45">WIND</span></div>
-            </div>
-            <div className="mt-5 grid grid-cols-2 border-t border-white/15 pt-4 text-[10px]">
-              <div>
-                <span className="block tracking-[0.1em] text-white/45">WBGT NOW · GRID</span>
-                <strong className="mt-1 block text-base">{weather?.currentWbgt?.toFixed(1) ?? '—'}°F</strong>
               </div>
-              <div className="border-l border-white/15 pl-4">
-                <span className="block tracking-[0.1em] text-white/45">AIR TEMP NOW · {weather?.observation?.station ?? '—'}</span>
-                <strong className="mt-1 block text-base">{weather?.observation?.temperature?.toFixed(0) ?? '—'}° · {weather?.observation?.condition ?? '—'}</strong>
+            </section>
+
+            <section className="rounded-[1.5rem] border border-white/20 bg-white/90 p-5 text-black backdrop-blur-xl sm:p-6">
+              <div><p className="text-[10px] font-semibold tracking-[0.12em] text-hawk">UIL RULES · BASED ON THE FORECAST</p><h2 className="mt-2 text-2xl font-medium">What this would mean</h2></div>
+              <div className="mt-6 border-y border-black/15 py-5"><span className="text-[9px] tracking-[0.1em] text-black/45">HEAT STATUS</span><strong className="mt-2 block text-3xl tracking-[-0.04em]">{selected?.flag === 'black' ? 'No outdoor practice' : 'Heat-permitted'}</strong><span className="mt-2 inline-flex px-2 py-1 text-[10px] font-bold text-white" style={{ backgroundColor: accent }}>{status?.name ?? 'Loading'}</span></div>
+              {status && <ul className="mt-5 grid gap-2 text-sm leading-5 text-black/65">{status.rules.map((rule) => <li key={rule} className="flex gap-2"><span className="font-bold text-hawk">•</span><span>{rule}</span></li>)}</ul>}
+              <div className="mt-6 border-t border-black/15 pt-5 text-xs leading-5 text-black/55">
+                This applies the predicted WBGT to UIL’s all-sports Class 3 limits. Rockwall-Heath confirms the official golf status from conditions near practice time.
               </div>
-            </div>
-          </aside>
+            </section>
+          </div>
         </div>
 
         <div className="relative z-10 mx-auto mt-auto w-full max-w-[1600px] overflow-hidden rounded-[1.5rem] border border-white/15 bg-black/55 shadow-2xl backdrop-blur-xl">
@@ -499,7 +507,7 @@ export default function App() {
                   <WeatherGlyph condition={outlook.condition} className="my-3 h-5 w-5 text-white/80" />
                   <span className="block text-xl font-medium tracking-[-0.05em]">{outlook.wbgt?.toFixed(1) ?? '—'}° <small className="text-[8px] font-semibold tracking-[0.08em] text-white/40">WBGT</small></span>
                   <span className="mt-1 block text-[10px] font-medium" style={{ color: meta?.color ?? 'rgba(255,255,255,.45)' }}>{plainDecision(outlook)}</span>
-                  {outlook.wbgt !== null && <span className="mt-1 block text-[9px] text-white/45">{Math.max(0, 92.1 - outlook.wbgt).toFixed(1)}° TO NO</span>}
+                  {outlook.wbgt !== null && <span className="mt-1 block text-[9px] text-white/45">{outlook.wbgt >= 92.1 ? `${(outlook.wbgt - 92.1).toFixed(1)}° OVER LIMIT` : `${(92.1 - outlook.wbgt).toFixed(1)}° TO NO`}</span>}
                 </button>
               )
             })}
@@ -522,7 +530,7 @@ export default function App() {
             </div>
             <div className="max-w-lg self-end lg:col-span-4 lg:col-start-9">
               <p className="text-xl font-medium leading-7">Texas UIL’s statewide heat-safety standard takes effect August 1, 2026.</p>
-              <p className="mt-5 text-sm leading-6 text-black/60">It requires WBGT monitoring for outdoor activity. This page turns the NWS planning forecast into one immediate answer for Heath families. It is not the coach’s final call.</p>
+              <p className="mt-5 text-sm leading-6 text-black/60">It requires WBGT monitoring for outdoor activity. This page turns the NWS planning forecast into one immediate answer for Rockwall-Heath girls golf families. It is not the coach’s final call.</p>
               <a href="https://www.uiltexas.org/health/info/heat-stress-and-athletic-participation" target="_blank" rel="noreferrer" className="mt-7 inline-flex items-center gap-2 border-b border-black pb-1 text-xs font-bold tracking-[0.08em]">READ THE OFFICIAL UIL PLAN <ExternalLink className="h-3.5 w-3.5" /></a>
             </div>
           </div>
@@ -541,7 +549,7 @@ export default function App() {
       </section>
 
       <section className="relative isolate min-h-[900px] overflow-hidden border-y border-white/15 bg-[#0a0d0f] px-4 py-24 sm:px-8 lg:px-12 lg:py-36">
-        <img src="/weather/heath-storm.webp" alt="Illustrative storm approaching a Heath, Texas high-school field" className="absolute inset-0 -z-10 h-[118%] w-full object-cover opacity-70" style={{ transform: `translate3d(0, ${storyShift}px, 0) scale(1.04)` }} />
+        <img src="/weather/heath-storm.webp" alt="Illustrative rain sweeping across a coastal links golf course" className="absolute inset-0 -z-10 h-[118%] w-full object-cover opacity-70" style={{ transform: `translate3d(0, ${storyShift}px, 0) scale(1.04)` }} />
         <div className="absolute inset-0 -z-10 bg-[linear-gradient(90deg,rgba(5,8,10,.93)_0%,rgba(5,8,10,.62)_55%,rgba(5,8,10,.32)_100%)]" />
         <div className="mx-auto grid max-w-[1600px] gap-16 lg:grid-cols-12">
           <div className="lg:col-span-7">
@@ -554,7 +562,7 @@ export default function App() {
             <div className="rounded-[1.5rem] border border-white/20 bg-white/90 p-6 text-black backdrop-blur-xl"><ShieldCheck className="h-6 w-6 text-hawk" /><p className="mt-10 text-[10px] font-bold tracking-[0.12em] text-black/45">THE PREDICTOR CANNOT KNOW</p><h3 className="mt-2 text-2xl font-medium">The official status</h3><ul className="mt-4 grid gap-2 text-sm leading-5 text-black/60"><li>• The school’s exact field reading</li><li>• Lightning, air quality or field closures</li><li>• Athlete condition or cumulative workload</li><li>• Coach, trainer or campus decisions</li></ul></div>
           </div>
         </div>
-        <p className="absolute bottom-5 right-5 text-[9px] font-semibold tracking-[0.1em] text-white/40">ILLUSTRATIVE HEATH WEATHER SCENE</p>
+        <p className="absolute bottom-5 right-5 text-[9px] font-semibold tracking-[0.1em] text-white/40">ILLUSTRATIVE GOLF WEATHER SCENE</p>
       </section>
 
       <section className="bg-[#f1efe9] px-4 py-24 text-[#101214] sm:px-8 lg:px-12 lg:py-32">
@@ -588,7 +596,66 @@ export default function App() {
             </div>
           </div>
 
-          <footer className="mt-20 flex flex-col justify-between gap-5 border-t border-black/20 pt-6 text-[10px] font-semibold tracking-[0.08em] text-black/50 sm:flex-row"><span>BUILT FOR ROCKWALL-HEATH HAWKS FAMILIES</span><span>HEAT PREDICTION ONLY · NOT AN OFFICIAL SCHOOL ANNOUNCEMENT</span></footer>
+        </div>
+      </section>
+
+      <section className="relative overflow-hidden bg-[#0a0d0f] px-4 py-24 text-white sm:px-8 lg:px-12 lg:py-32">
+        <div className="absolute inset-0 opacity-[0.08] [background-image:linear-gradient(rgba(255,255,255,.16)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.16)_1px,transparent_1px)] [background-size:56px_56px]" />
+        <div className="relative mx-auto max-w-[1600px]">
+          <div className="grid gap-10 lg:grid-cols-12 lg:items-end">
+            <div className="lg:col-span-8">
+              <p className="text-xs font-bold tracking-[0.14em] text-[#f0a9b7]">FOR THE GIRLS’ GOLF BAG</p>
+              <h2 className="mt-5 text-[clamp(3.5rem,8vw,8rem)] font-medium leading-[0.84] tracking-[-0.075em]">PACK FOR<br />THE HEAT.</h2>
+            </div>
+            <div className="max-w-lg lg:col-span-4">
+              <p className="text-xl font-medium leading-7">A planning checklist for hot practices—not a substitute for the team athletic trainer or your child’s clinician.</p>
+              <p className="mt-4 text-sm leading-6 text-white/55">Needs vary by athlete, practice length, medical history and conditions on the course.</p>
+            </div>
+          </div>
+
+          <div className="mt-16 grid border-l border-t border-white/15 sm:grid-cols-2 lg:grid-cols-5">
+            <article className="min-h-72 border-b border-r border-white/15 p-6">
+              <GlassWater className="h-6 w-6 text-[#f0a9b7]" />
+              <p className="mt-12 text-[10px] font-bold tracking-[0.12em] text-white/45">01 · COLD WATER</p>
+              <h3 className="mt-2 text-2xl font-medium">Plan the volume.</h3>
+              <p className="mt-4 text-sm leading-6 text-white/60">AAP guidance says teens may need about 34–50 oz per hour during vigorous activity. Sip regularly; individual needs vary.</p>
+            </article>
+            <article className="min-h-72 border-b border-r border-white/15 p-6">
+              <Snowflake className="h-6 w-6 text-[#f0a9b7]" />
+              <p className="mt-12 text-[10px] font-bold tracking-[0.12em] text-white/45">02 · ELECTROLYTE BACKUP</p>
+              <h3 className="mt-2 text-2xl font-medium">Longer than an hour?</h3>
+              <p className="mt-4 text-sm leading-6 text-white/60">For long practices or heavy sweating, Liquid I.V. or another balanced electrolyte drink can be an option. Follow the label and trainer guidance; skip energy drinks.</p>
+            </article>
+            <article className="min-h-72 border-b border-r border-white/15 p-6">
+              <Fan className="h-6 w-6 text-[#f0a9b7]" />
+              <p className="mt-12 text-[10px] font-bold tracking-[0.12em] text-white/45">03 · COOLING KIT</p>
+              <h3 className="mt-2 text-2xl font-medium">Bring your shade.</h3>
+              <p className="mt-4 text-sm leading-6 text-white/60">Pack a golf umbrella, cooling towel and small mister or fan. Use every shaded break the team provides.</p>
+            </article>
+            <article className="min-h-72 border-b border-r border-white/15 p-6">
+              <Shirt className="h-6 w-6 text-[#f0a9b7]" />
+              <p className="mt-12 text-[10px] font-bold tracking-[0.12em] text-white/45">04 · WEAR LIGHT</p>
+              <h3 className="mt-2 text-2xl font-medium">Help heat escape.</h3>
+              <p className="mt-4 text-sm leading-6 text-white/60">Choose light-colored, breathable, loose-fitting golf clothes. Add a visor or hat and broad-spectrum sunscreen.</p>
+            </article>
+            <article className="min-h-72 border-b border-r border-white/15 p-6 sm:col-span-2 lg:col-span-1">
+              <CircleAlert className="h-6 w-6 text-[#f0a9b7]" />
+              <p className="mt-12 text-[10px] font-bold tracking-[0.12em] text-white/45">05 · STOP SIGNALS</p>
+              <h3 className="mt-2 text-2xl font-medium">Do not push through.</h3>
+              <p className="mt-4 text-sm leading-6 text-white/60">Feeling faint, weak, dizzy, confused or unusually ill means stop, get cool and tell an adult or trainer immediately.</p>
+            </article>
+          </div>
+
+          <div className="mt-8 flex flex-col justify-between gap-6 border-b border-white/15 pb-8 text-xs leading-5 text-white/50 lg:flex-row lg:items-end">
+            <p className="max-w-2xl">General preparation guidance for healthy teen athletes. Follow the team athletic trainer and your child’s clinician, especially for medical conditions or medications. Confusion, collapse or loss of consciousness can be an emergency: call 911 and begin rapid cooling.</p>
+            <div className="flex flex-wrap gap-x-6 gap-y-3 font-semibold tracking-[0.05em] text-white/70">
+              <a href="https://www.healthychildren.org/English/healthy-living/nutrition/Pages/Choose-Water-for-Healthy-Hydration.aspx" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 border-b border-white/40 pb-1">AAP HYDRATION <ExternalLink className="h-3 w-3" /></a>
+              <a href="https://www.cdc.gov/heat-health/risk-factors/heat-and-athletes.html" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 border-b border-white/40 pb-1">CDC HEAT SAFETY <ExternalLink className="h-3 w-3" /></a>
+              <a href="https://www.uiltexas.org/health/info/heat-stress-and-athletic-participation" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 border-b border-white/40 pb-1">UIL PLAN <ExternalLink className="h-3 w-3" /></a>
+            </div>
+          </div>
+
+          <footer className="mt-6 flex flex-col justify-between gap-5 text-[10px] font-semibold tracking-[0.08em] text-white/40 sm:flex-row"><span>BUILT FOR ROCKWALL-HEATH GIRLS GOLF FAMILIES</span><span>HEAT PREDICTION ONLY · NOT AN OFFICIAL SCHOOL ANNOUNCEMENT</span></footer>
         </div>
       </section>
     </main>

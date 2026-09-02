@@ -7,9 +7,9 @@ type WeatherBackdropProps = {
 }
 
 const WEATHER_PHOTOS = [
-  { id: 'clear', src: '/weather/heath-clear.webp', alt: 'A sunny high-school football practice field in Heath, Texas' },
-  { id: 'clouds', src: '/weather/heath-building-clouds.webp', alt: 'Clouds building above a high-school football practice field in Heath, Texas' },
-  { id: 'storm', src: '/weather/heath-storm.webp', alt: 'A thunderstorm approaching a high-school football practice field in Heath, Texas' },
+  { id: 'clear', src: '/weather/heath-clear.webp', alt: 'A sunlit tropical coastal golf course beneath a clear blue sky' },
+  { id: 'clouds', src: '/weather/heath-building-clouds.webp', alt: 'A coastal links golf course beneath dramatic building clouds' },
+  { id: 'storm', src: '/weather/heath-storm.webp', alt: 'Rain sweeping across a windswept coastal links golf course' },
 ] as const
 
 function selectPhoto(condition: string, cloudCover: number, rainChance: number) {
