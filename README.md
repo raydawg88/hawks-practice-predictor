@@ -2,6 +2,8 @@
 
 A parent-friendly, heat-based outdoor practice predictor for Rockwall-Heath Hawks families.
 
+**Live site:** [hawks-practice-predictor.netlify.app](https://hawks-practice-predictor.netlify.app)
+
 The site combines the National Weather Service forecast WBGT for ZIP code `75032` with the Texas UIL Class 3 activity bands. It answers four practical questions:
 
 1. Is outdoor practice heat-permitted today?
