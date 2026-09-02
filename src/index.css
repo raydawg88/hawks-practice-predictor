@@ -1,0 +1,27 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-ink;
+  }
+
+  html {
+    background: #F5F4F0;
+  }
+
+  body {
+    @apply m-0 min-w-[320px] bg-paper text-ink antialiased;
+  }
+
+  button, a {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  ::selection {
+    @apply bg-hawk text-white;
+  }
+}
