@@ -234,8 +234,8 @@ function DecisionMeter({ wbgt }: { wbgt: number | null }) {
 
 function HawksMark() {
   return (
-    <div className="flex items-center gap-3" aria-label="Rockwall-Heath Hawks">
-      <img src="/heath-hawks-logo-cropped.png" alt="Rockwall-Heath Hawks" className="h-14 w-auto object-contain sm:h-16" />
+    <div className="flex items-center gap-3" aria-label="Rockwall-Heath Hawks Practice Predictor">
+      <img src="/heath-varsity-h.png" alt="Rockwall-Heath varsity H" className="h-12 w-auto object-contain sm:h-14" />
       <div className="hidden border-l border-white/20 pl-3 text-[10px] font-semibold tracking-[0.1em] text-white/65 sm:block">PRACTICE<br />PREDICTOR</div>
     </div>
   )
