@@ -186,6 +186,12 @@ function plainDecision(outlook: Outlook | null) {
   return 'YES · NORMAL PRACTICE'
 }
 
+function predictionReason(outlook: Outlook | null) {
+  if (outlook?.wbgt === null || outlook?.wbgt === undefined) return 'Waiting for the predicted WBGT.'
+  if (outlook.wbgt >= 92.1) return `NO — the predicted WBGT is ${outlook.wbgt.toFixed(1)}°F, at or above the 92.1°F UIL limit.`
+  return `YES — the predicted WBGT is ${outlook.wbgt.toFixed(1)}°F, ${(92.1 - outlook.wbgt).toFixed(1)}° below the 92.1°F UIL limit.`
+}
+
 function DecisionMeter({ wbgt }: { wbgt: number | null }) {
   const minimum = 78
   const maximum = 96
@@ -197,21 +203,21 @@ function DecisionMeter({ wbgt }: { wbgt: number | null }) {
   const message = margin === null
     ? 'Waiting for the forecast'
     : margin <= 0
-      ? `${Math.abs(margin).toFixed(1)}°F above the cancellation line`
+      ? `${Math.abs(margin).toFixed(1)}°F above the UIL WBGT limit`
       : margin <= 1.5
-        ? `Close call — only ${margin.toFixed(1)}°F below cancellation`
+        ? `Close call — only ${margin.toFixed(1)}°F below the UIL WBGT limit`
         : margin <= 5
-          ? `Keep watching — ${margin.toFixed(1)}°F below cancellation`
-          : `${margin.toFixed(1)}°F below the cancellation line`
+          ? `Keep watching — ${margin.toFixed(1)}°F below the UIL WBGT limit`
+          : `${margin.toFixed(1)}°F below the UIL WBGT limit`
 
   return (
     <div className="mt-5 border-y border-white/15 py-4">
       <div className="flex items-end justify-between gap-5">
         <div>
-          <div className="text-[9px] font-semibold tracking-[0.13em] text-white/45">HOW CLOSE IS IT?</div>
+          <div className="text-[9px] font-semibold tracking-[0.13em] text-white/45">HOW CLOSE IS THE WBGT?</div>
           <div className="mt-1 text-sm font-semibold">{message}</div>
         </div>
-        <div className="shrink-0 text-right text-[10px] text-white/45">NO PRACTICE<br /><strong className="text-white">92.1°F</strong></div>
+        <div className="max-w-[9rem] shrink-0 text-right text-[9px] leading-3 text-white/45">UIL NO-OUTDOOR LIMIT<br /><strong className="text-sm text-white">92.1°F WBGT</strong></div>
       </div>
       <div className="relative mt-5 h-2 bg-white/20">
         <div className="absolute inset-y-0 right-0 bg-hawk/80" style={{ left: `${line}%` }} />
@@ -219,8 +225,8 @@ function DecisionMeter({ wbgt }: { wbgt: number | null }) {
         <div className="absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-hawk shadow-[0_0_18px_rgba(200,16,46,.8)]" style={{ left: `${marker}%` }} />
       </div>
       <div className="mt-2 flex justify-between text-[9px] font-medium tracking-[0.08em] text-white/40">
-        <span>PRACTICE EXPECTED</span>
-        <span>CANCEL</span>
+        <span>HEAT-PERMITTED</span>
+        <span>NO OUTDOOR PRACTICE</span>
       </div>
     </div>
   )
@@ -413,7 +419,8 @@ export default function App() {
                 {loading ? '…' : error ? 'CHECK.' : status?.verdict ?? '—'}
               </div>
               <div className="max-w-sm border-l-2 pb-1 pl-4" style={{ borderColor: accent }}>
-                <p className="text-base font-semibold leading-5">{error ?? status?.instruction ?? 'Waiting for the 3 PM WBGT forecast.'}</p>
+                <p className="text-base font-semibold leading-5">{error ?? predictionReason(selected)}</p>
+                {status && <p className="mt-2 text-xs leading-4 text-white/70">{status.instruction}</p>}
                 <p className="mt-2 text-[10px] font-medium tracking-[0.06em] text-white/55">PREDICTION ONLY · SCHOOL MAKES THE FINAL CALL</p>
               </div>
             </div>
@@ -424,20 +431,25 @@ export default function App() {
           </div>
 
           <aside className="overflow-hidden rounded-[1.75rem] border border-white/25 bg-black/45 p-5 shadow-2xl backdrop-blur-xl lg:col-span-4 lg:p-6" style={{ transform: `translate3d(0, ${heroShift * 0.16}px, 0)` }}>
-            <div className="flex items-start justify-between gap-5">
-              <div>
-                <div className="text-[10px] font-semibold tracking-[0.12em] text-white/55">{selected?.day.toUpperCase() ?? 'TODAY'} · {selected?.dateLabel.toUpperCase() ?? ''} · 3 PM</div>
+            <div className="grid grid-cols-2 gap-5">
+              <div className="border-r border-white/15 pr-4">
+                <div className="text-[9px] font-semibold tracking-[0.1em] text-white/55">3 PM AIR TEMPERATURE</div>
                 <div className="mt-3 flex items-center gap-3">
                   <WeatherGlyph condition={selected?.condition ?? 'Sunny'} className="h-9 w-9 text-[#ffd278]" />
                   <span className="text-5xl font-medium tracking-[-0.06em]">{selected?.temperature?.toFixed(0) ?? '—'}°</span>
                 </div>
+                <div className="mt-2 text-[9px] text-white/40">WEATHER FORECAST</div>
               </div>
-              <div className="text-right">
-                <div className="text-[10px] font-semibold tracking-[0.12em] text-white/55">FORECAST WBGT</div>
-                <div className="mt-1 text-4xl font-medium tracking-[-0.06em]">{selected?.wbgt?.toFixed(1) ?? '—'}°</div>
+              <div>
+                <div className="text-[9px] font-semibold tracking-[0.1em] text-white/55">3 PM PREDICTED WBGT</div>
+                <div className="mt-3 text-5xl font-medium tracking-[-0.06em]">{selected?.wbgt?.toFixed(1) ?? '—'}°</div>
+                <div className="mt-2 text-[9px] font-semibold text-[#f0a9b7]">UIL USES THIS NUMBER</div>
               </div>
             </div>
-            <h2 className="mt-7 text-xl font-medium leading-6">{selected?.condition ?? 'Reading the sky'}</h2>
+            <div className="mt-5 rounded-xl border border-[#f0a9b7]/35 bg-[#c8102e]/10 px-4 py-3 text-xs leading-5 text-white/80">
+              <strong className="text-white">These are different measurements.</strong> Air temperature describes the weather. WBGT combines heat, humidity, wind and sun—and WBGT is what UIL compares with 92.1°F.
+            </div>
+            <h2 className="mt-5 text-xl font-medium leading-6">{selected?.condition ?? 'Reading the sky'} · {selected?.day ?? 'Today'} at 3 PM</h2>
             <p className="mt-2 line-clamp-2 text-xs leading-5 text-white/65">{selected?.detail ?? 'Forecast details will appear when the weather service responds.'}</p>
             <DecisionMeter wbgt={selected?.wbgt ?? null} />
             {status && (
@@ -459,7 +471,7 @@ export default function App() {
                 <strong className="mt-1 block text-base">{weather?.currentWbgt?.toFixed(1) ?? '—'}°F</strong>
               </div>
               <div className="border-l border-white/15 pl-4">
-                <span className="block tracking-[0.1em] text-white/45">OBSERVED · {weather?.observation?.station ?? '—'}</span>
+                <span className="block tracking-[0.1em] text-white/45">AIR TEMP NOW · {weather?.observation?.station ?? '—'}</span>
                 <strong className="mt-1 block text-base">{weather?.observation?.temperature?.toFixed(0) ?? '—'}° · {weather?.observation?.condition ?? '—'}</strong>
               </div>
             </div>
@@ -485,7 +497,7 @@ export default function App() {
                   <span className="text-xs font-semibold">{outlook.day}</span>
                   <span className="ml-2 text-[10px] text-white/40">{outlook.dateLabel}</span>
                   <WeatherGlyph condition={outlook.condition} className="my-3 h-5 w-5 text-white/80" />
-                  <span className="block text-xl font-medium tracking-[-0.05em]">{outlook.wbgt?.toFixed(1) ?? '—'}°</span>
+                  <span className="block text-xl font-medium tracking-[-0.05em]">{outlook.wbgt?.toFixed(1) ?? '—'}° <small className="text-[8px] font-semibold tracking-[0.08em] text-white/40">WBGT</small></span>
                   <span className="mt-1 block text-[10px] font-medium" style={{ color: meta?.color ?? 'rgba(255,255,255,.45)' }}>{plainDecision(outlook)}</span>
                   {outlook.wbgt !== null && <span className="mt-1 block text-[9px] text-white/45">{Math.max(0, 92.1 - outlook.wbgt).toFixed(1)}° TO NO</span>}
                 </button>
