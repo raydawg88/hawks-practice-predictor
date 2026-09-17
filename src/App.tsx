@@ -179,21 +179,20 @@ function WeatherGlyph({ condition, className = 'h-6 w-6' }: { condition: string;
 
 function plainDecision(outlook: Outlook | null) {
   if (!outlook) return 'FORECAST PENDING'
-  if (outlook.prediction.state === 'likely-off') return 'LIKELY OFF'
-  if (outlook.prediction.state === 'watch') return 'WATCH CLOSELY'
-  if (outlook.prediction.state === 'likely-on') return 'LIKELY ON'
+  if (outlook.prediction.state === 'no') return 'NO PRACTICE'
+  if (outlook.prediction.state === 'yes') return 'YES · PRACTICE'
   return 'FORECAST PENDING'
 }
 
 function predictionReason(outlook: Outlook | null) {
   if (!outlook || outlook.wbgt === null) return 'Waiting for the exact-location WBGT forecast.'
   const { prediction } = outlook
-  if (prediction.state === 'likely-off') return `The NWS forecast itself reaches the ${UIL_NO_PRACTICE_WBGT}°F no-practice line.`
-  if (prediction.state === 'watch') {
-    if (prediction.liveWarning) return `Live air temperature is running ${prediction.liveTemperatureGap?.toFixed(1)}°F hotter than the model. Treat this as a cancellation risk.`
-    return `The NWS forecast is below the line, but the conservative planning ceiling reaches ${prediction.planningCeiling?.toFixed(1)}°F.`
+  if (prediction.state === 'no') {
+    if (outlook.wbgt >= UIL_NO_PRACTICE_WBGT) return `NO — the NWS forecast itself reaches the ${UIL_NO_PRACTICE_WBGT}°F no-practice line.`
+    if (prediction.liveWarning) return `NO — live air temperature is running ${prediction.liveTemperatureGap?.toFixed(1)}°F hotter than the model.`
+    return `NO — the forecast is below the line, but the conservative planning ceiling reaches ${prediction.planningCeiling?.toFixed(1)}°F.`
   }
-  return `Even the conservative ${prediction.planningCeiling?.toFixed(1)}°F planning ceiling stays ${prediction.ceilingMargin?.toFixed(1)}° below the UIL line.`
+  return `YES — the conservative ${prediction.planningCeiling?.toFixed(1)}°F planning ceiling stays ${prediction.ceilingMargin?.toFixed(1)}° below the UIL line.`
 }
 
 function DecisionMeter({ outlook }: { outlook: Outlook | null }) {
@@ -417,11 +416,7 @@ export default function App() {
 
   const selected = weather?.outlooks[selectedIndex] ?? null
   const status = selected?.flag ? FLAG_META[selected.flag] : null
-  const accent = selected?.prediction.state === 'likely-on'
-    ? '#61D18B'
-    : selected?.prediction.state === 'watch'
-      ? '#F3C74F'
-      : '#C8102E'
+  const accent = selected?.prediction.state === 'yes' ? '#61D18B' : '#C8102E'
   const questionDay = selectedIndex === 0
     ? 'TODAY'
     : selected
@@ -474,7 +469,7 @@ export default function App() {
               PRACTICE PREDICTOR · {plainDecision(selected)} · 2:45–3:00 PM
             </div>
             <h1 className="max-w-5xl text-[clamp(2.6rem,6.4vw,6.7rem)] font-medium leading-[0.86] tracking-[-0.072em] text-white drop-shadow-[0_2px_18px_rgba(0,0,0,0.38)]">
-              IS OUTDOOR PRACTICE<br />LIKELY {questionDay}?
+              IS THERE OUTDOOR<br />PRACTICE {questionDay}?
             </h1>
             <div className="mt-6 flex flex-wrap items-end gap-x-8 gap-y-5">
               <div className="text-[clamp(4.1rem,10.8vw,10.5rem)] font-bold leading-[0.7] tracking-[-0.085em] text-white drop-shadow-[0_4px_25px_rgba(0,0,0,0.32)]">
@@ -498,17 +493,10 @@ export default function App() {
             <DecisionMeter outlook={selected} />
           </div>
 
-          {selected?.prediction.state === 'watch' && (
-            <div className="mt-4 flex items-start gap-3 rounded-2xl border border-[#f3c74f]/60 bg-[#f3c74f] px-5 py-4 text-black shadow-xl">
-              <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0" />
-              <p className="text-sm font-semibold leading-5">Plan for a possible cancellation. The point forecast is below the line, but the conservative ceiling or live conditions are not.</p>
-            </div>
-          )}
-
-          {selected?.prediction.state === 'likely-off' && (
+          {selected?.prediction.state === 'no' && (
             <div className="mt-4 flex items-start gap-3 rounded-2xl border border-white/25 bg-hawk px-5 py-4 text-white shadow-xl">
               <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0" />
-              <p className="text-sm font-semibold leading-5">Plan for no outdoor practice unless the school announces otherwise. The forecast itself reaches the UIL no-practice line.</p>
+              <p className="text-sm font-semibold leading-5">Plan for no outdoor practice unless the school announces otherwise. This predictor chooses NO whenever the conservative ceiling crosses the UIL line.</p>
             </div>
           )}
 
@@ -546,8 +534,10 @@ export default function App() {
 
             <section className="rounded-[1.5rem] border border-white/20 bg-white/90 p-5 text-black backdrop-blur-xl sm:p-6">
               <div><p className="text-[10px] font-semibold tracking-[0.12em] text-hawk">3 · CONSERVATIVE PLANNING CALL</p><h2 className="mt-2 text-2xl font-medium">What families should plan for</h2></div>
-              <div className="mt-6 border-y border-black/15 py-5"><span className="text-[9px] tracking-[0.1em] text-black/45">PLANNING CEILING</span><strong className="mt-2 block text-5xl tracking-[-0.06em]">{selected?.prediction.planningCeiling?.toFixed(1) ?? '—'}°</strong><span className="mt-2 block text-xl font-semibold">{plainDecision(selected)}</span><span className="mt-3 inline-flex px-2 py-1 text-[10px] font-bold text-white" style={{ backgroundColor: accent }}>{selected?.prediction.state === 'watch' ? 'CANCELLATION RISK' : status?.name ?? 'Loading'}</span></div>
-              {status && <ul className="mt-5 grid gap-2 text-sm leading-5 text-black/65">{status.rules.map((rule) => <li key={rule} className="flex gap-2"><span className="font-bold text-hawk">•</span><span>{rule}</span></li>)}</ul>}
+              <div className="mt-6 border-y border-black/15 py-5"><span className="text-[9px] tracking-[0.1em] text-black/45">PLANNING CEILING</span><strong className="mt-2 block text-5xl tracking-[-0.06em]">{selected?.prediction.planningCeiling?.toFixed(1) ?? '—'}°</strong><span className="mt-2 block text-xl font-semibold">{plainDecision(selected)}</span><span className="mt-3 inline-flex px-2 py-1 text-[10px] font-bold text-white" style={{ backgroundColor: accent }}>{selected?.prediction.state === 'no' ? 'NO PRACTICE PREDICTED' : status?.name ?? 'Loading'}</span></div>
+              {selected?.prediction.state === 'no'
+                ? <ul className="mt-5 grid gap-2 text-sm leading-5 text-black/65"><li className="flex gap-2"><span className="font-bold text-hawk">•</span><span>Plan for no outdoor practice unless the school confirms otherwise.</span></li></ul>
+                : status && <ul className="mt-5 grid gap-2 text-sm leading-5 text-black/65">{status.rules.map((rule) => <li key={rule} className="flex gap-2"><span className="font-bold text-hawk">•</span><span>{rule}</span></li>)}</ul>}
               <div className="mt-6 border-t border-black/15 pt-5 text-xs leading-5 text-black/55">
                 The ceiling uses the hotter local NWS grid plus a temporary {INCIDENT_SAFETY_ALLOWANCE}°F allowance based on the September 16 miss. It is deliberately conservative and is not an official WBGT reading.
               </div>

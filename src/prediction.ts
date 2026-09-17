@@ -1,5 +1,5 @@
 export type Flag = 'green' | 'yellow' | 'orange' | 'red' | 'black'
-export type PredictionState = 'likely-on' | 'watch' | 'likely-off' | 'pending'
+export type PredictionState = 'yes' | 'no' | 'pending'
 
 export const UIL_NO_PRACTICE_WBGT = 92.1
 export const INCIDENT_SAFETY_ALLOWANCE = 6
@@ -15,7 +15,7 @@ type PredictionInput = {
 
 export type PracticePrediction = {
   state: PredictionState
-  headline: 'LIKELY ON.' | 'WATCH.' | 'LIKELY OFF.' | 'CHECK.'
+  headline: 'YES.' | 'NO.' | 'CHECK.'
   planningCeiling: number | null
   ceilingMargin: number | null
   spatialHigh: number | null
@@ -65,14 +65,14 @@ export function buildPracticePrediction(input: PredictionInput): PracticePredict
   const liveWarning = input.useLiveSignal && liveTemperatureGap !== null && liveTemperatureGap >= LIVE_TEMPERATURE_WARNING_GAP
 
   if (input.forecastWbgt >= UIL_NO_PRACTICE_WBGT) {
-    return { state: 'likely-off', headline: 'LIKELY OFF.', planningCeiling, ceilingMargin, spatialHigh, liveTemperatureGap, liveWarning }
+    return { state: 'no', headline: 'NO.', planningCeiling, ceilingMargin, spatialHigh, liveTemperatureGap, liveWarning }
   }
 
   if (planningCeiling >= UIL_NO_PRACTICE_WBGT || liveWarning) {
-    return { state: 'watch', headline: 'WATCH.', planningCeiling, ceilingMargin, spatialHigh, liveTemperatureGap, liveWarning }
+    return { state: 'no', headline: 'NO.', planningCeiling, ceilingMargin, spatialHigh, liveTemperatureGap, liveWarning }
   }
 
-  return { state: 'likely-on', headline: 'LIKELY ON.', planningCeiling, ceilingMargin, spatialHigh, liveTemperatureGap, liveWarning }
+  return { state: 'yes', headline: 'YES.', planningCeiling, ceilingMargin, spatialHigh, liveTemperatureGap, liveWarning }
 }
 
 export function mergeForecastHistory(history: ForecastSnapshot[], snapshot: ForecastSnapshot, limit = 500): ForecastSnapshot[] {

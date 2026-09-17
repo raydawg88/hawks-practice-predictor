@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildPracticePrediction, getUilFlag, mergeForecastHistory } from '../src/prediction.ts'
 
-test('turns a comfortable point forecast into watch when the incident ceiling crosses the UIL limit', () => {
+test('answers no when the incident ceiling crosses the UIL limit', () => {
   const prediction = buildPracticePrediction({
     forecastWbgt: 87,
     nearbyWbgt: 89,
@@ -11,14 +11,14 @@ test('turns a comfortable point forecast into watch when the incident ceiling cr
     useLiveSignal: true,
   })
 
-  assert.equal(prediction.state, 'watch')
-  assert.equal(prediction.headline, 'WATCH.')
+  assert.equal(prediction.state, 'no')
+  assert.equal(prediction.headline, 'NO.')
   assert.equal(prediction.planningCeiling, 95)
   assert.equal(prediction.ceilingMargin, -2.9)
   assert.equal(prediction.liveTemperatureGap, 1)
 })
 
-test('calls practice likely off when the central forecast itself reaches the UIL no-practice line', () => {
+test('answers no when the central forecast itself reaches the UIL no-practice line', () => {
   const prediction = buildPracticePrediction({
     forecastWbgt: 92.1,
     nearbyWbgt: 91,
@@ -27,11 +27,11 @@ test('calls practice likely off when the central forecast itself reaches the UIL
     useLiveSignal: true,
   })
 
-  assert.equal(prediction.state, 'likely-off')
-  assert.equal(prediction.headline, 'LIKELY OFF.')
+  assert.equal(prediction.state, 'no')
+  assert.equal(prediction.headline, 'NO.')
 })
 
-test('calls practice likely on only when the planning ceiling remains below the UIL limit', () => {
+test('answers yes only when the planning ceiling remains below the UIL limit', () => {
   const prediction = buildPracticePrediction({
     forecastWbgt: 84,
     nearbyWbgt: 85,
@@ -40,13 +40,13 @@ test('calls practice likely on only when the planning ceiling remains below the 
     useLiveSignal: true,
   })
 
-  assert.equal(prediction.state, 'likely-on')
-  assert.equal(prediction.headline, 'LIKELY ON.')
+  assert.equal(prediction.state, 'yes')
+  assert.equal(prediction.headline, 'YES.')
   assert.equal(prediction.planningCeiling, 91)
   assert.equal(prediction.ceilingMargin, 1.1)
 })
 
-test('escalates to watch when live air temperature is materially hotter than the model', () => {
+test('answers no when live air temperature is materially hotter than the model', () => {
   const prediction = buildPracticePrediction({
     forecastWbgt: 83,
     nearbyWbgt: 84,
@@ -57,7 +57,7 @@ test('escalates to watch when live air temperature is materially hotter than the
 
   assert.equal(prediction.planningCeiling, 90)
   assert.equal(prediction.liveTemperatureGap, 4)
-  assert.equal(prediction.state, 'watch')
+  assert.equal(prediction.state, 'no')
   assert.equal(prediction.liveWarning, true)
 })
 
@@ -70,7 +70,7 @@ test('does not apply today live observation mismatch to a future day', () => {
     useLiveSignal: false,
   })
 
-  assert.equal(prediction.state, 'likely-on')
+  assert.equal(prediction.state, 'yes')
   assert.equal(prediction.liveWarning, false)
 })
 
@@ -107,7 +107,7 @@ test('stores fresh forecast snapshots without duplicating the same source issue 
     forecastWbgt: 87,
     nearbyWbgt: 89,
     planningCeiling: 95,
-    state: 'watch' as const,
+    state: 'no' as const,
   }
   const duplicate = { ...first, capturedAt: '2026-09-17T18:05:00.000Z' }
   const nextRun = { ...first, capturedAt: '2026-09-17T18:10:00.000Z', sourceUpdatedAt: '2026-09-17T18:08:00.000Z', forecastWbgt: 88 }
