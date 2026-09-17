@@ -1,26 +1,23 @@
 export type Flag = 'green' | 'yellow' | 'orange' | 'red' | 'black'
 export type PredictionState = 'yes' | 'no' | 'pending'
+export type DecisionSource = 'live' | 'forecast'
 
 export const UIL_NO_PRACTICE_WBGT = 92.1
-export const INCIDENT_SAFETY_ALLOWANCE = 6
-export const LIVE_TEMPERATURE_WARNING_GAP = 3
 
 type PredictionInput = {
   forecastWbgt: number | null
   nearbyWbgt: number | null
-  observedAirTemperature: number | null
-  modeledCurrentAirTemperature: number | null
+  liveWbgt: number | null
   useLiveSignal: boolean
 }
 
 export type PracticePrediction = {
   state: PredictionState
   headline: 'YES.' | 'NO.' | 'CHECK.'
-  planningCeiling: number | null
-  ceilingMargin: number | null
+  decisionWbgt: number | null
+  decisionMargin: number | null
+  decisionSource: DecisionSource | null
   spatialHigh: number | null
-  liveTemperatureGap: number | null
-  liveWarning: boolean
 }
 
 export type ForecastSnapshot = {
@@ -29,7 +26,8 @@ export type ForecastSnapshot = {
   target: string
   forecastWbgt: number | null
   nearbyWbgt: number | null
-  planningCeiling: number | null
+  decisionWbgt: number | null
+  decisionSource: DecisionSource | null
   state: PredictionState
 }
 
@@ -44,35 +42,40 @@ export function getUilFlag(wbgt: number): Flag {
 }
 
 export function buildPracticePrediction(input: PredictionInput): PracticePrediction {
-  if (input.forecastWbgt === null) {
+  const canUseLiveEstimate = input.useLiveSignal && input.liveWbgt !== null
+  const decisionSource: DecisionSource | null = canUseLiveEstimate
+    ? 'live'
+    : input.forecastWbgt !== null
+      ? 'forecast'
+      : null
+  const decisionWbgt = canUseLiveEstimate ? input.liveWbgt : input.forecastWbgt
+
+  if (decisionWbgt === null) {
     return {
       state: 'pending',
       headline: 'CHECK.',
-      planningCeiling: null,
-      ceilingMargin: null,
-      spatialHigh: null,
-      liveTemperatureGap: null,
-      liveWarning: false,
+      decisionWbgt: null,
+      decisionMargin: null,
+      decisionSource: null,
+      spatialHigh: input.nearbyWbgt,
     }
   }
 
-  const spatialHigh = Math.max(input.forecastWbgt, input.nearbyWbgt ?? input.forecastWbgt)
-  const planningCeiling = roundOne(spatialHigh + INCIDENT_SAFETY_ALLOWANCE)
-  const ceilingMargin = roundOne(UIL_NO_PRACTICE_WBGT - planningCeiling)
-  const liveTemperatureGap = input.observedAirTemperature !== null && input.modeledCurrentAirTemperature !== null
-    ? roundOne(input.observedAirTemperature - input.modeledCurrentAirTemperature)
-    : null
-  const liveWarning = input.useLiveSignal && liveTemperatureGap !== null && liveTemperatureGap >= LIVE_TEMPERATURE_WARNING_GAP
+  const spatialHigh = input.forecastWbgt === null
+    ? input.nearbyWbgt
+    : Math.max(input.forecastWbgt, input.nearbyWbgt ?? input.forecastWbgt)
+  const roundedDecisionWbgt = roundOne(decisionWbgt)
+  const decisionMargin = roundOne(UIL_NO_PRACTICE_WBGT - roundedDecisionWbgt)
+  const state = roundedDecisionWbgt >= UIL_NO_PRACTICE_WBGT ? 'no' : 'yes'
 
-  if (input.forecastWbgt >= UIL_NO_PRACTICE_WBGT) {
-    return { state: 'no', headline: 'NO.', planningCeiling, ceilingMargin, spatialHigh, liveTemperatureGap, liveWarning }
+  return {
+    state,
+    headline: state === 'no' ? 'NO.' : 'YES.',
+    decisionWbgt: roundedDecisionWbgt,
+    decisionMargin,
+    decisionSource,
+    spatialHigh,
   }
-
-  if (planningCeiling >= UIL_NO_PRACTICE_WBGT || liveWarning) {
-    return { state: 'no', headline: 'NO.', planningCeiling, ceilingMargin, spatialHigh, liveTemperatureGap, liveWarning }
-  }
-
-  return { state: 'yes', headline: 'YES.', planningCeiling, ceilingMargin, spatialHigh, liveTemperatureGap, liveWarning }
 }
 
 export function mergeForecastHistory(history: ForecastSnapshot[], snapshot: ForecastSnapshot, limit = 500): ForecastSnapshot[] {

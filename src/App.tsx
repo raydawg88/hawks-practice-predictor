@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CheckCircle2, CircleAlert, Cloud, CloudLightning, CloudRain, CloudSun, Database, Droplets, ExternalLink, Fan, Gauge, GlassWater, MapPin, RefreshCw, ShieldCheck, Shirt, Snowflake, Sun, TriangleAlert, Wind } from 'lucide-react'
 import WeatherBackdrop from './WeatherBackdrop'
-import { buildPracticePrediction, getUilFlag, INCIDENT_SAFETY_ALLOWANCE, mergeForecastHistory, type Flag, type ForecastSnapshot, type PracticePrediction, UIL_NO_PRACTICE_WBGT } from './prediction'
+import { buildPracticePrediction, getUilFlag, mergeForecastHistory, type Flag, type ForecastSnapshot, type PracticePrediction, UIL_NO_PRACTICE_WBGT } from './prediction'
+import { cloudCoverFromLayers, estimateOutdoorWbgt, type CloudLayer } from './wbgt'
 const ZIP_CODE = '75032'
 const TIME_ZONE = 'America/Chicago'
 const AUTO_REFRESH_MS = 5 * 60 * 1000
@@ -46,17 +47,19 @@ type Observation = {
   temperature: number | null
   humidity: number | null
   wind: number | null
+  pressure: number | null
+  cloudCover: number | null
 }
 type WeatherState = {
   outlooks: Outlook[]
-  currentWbgt: number | null
+  liveWbgt: number | null
+  liveCloudCover: number | null
   office: string | null
   gridId: string
   nearbyGridId: string
   coordinates: { latitude: number; longitude: number }
   nearbyCoordinates: { latitude: number; longitude: number }
   observation: Observation | null
-  modeledCurrentAirTemperature: number | null
   sourceUpdatedAt: Date | null
   updatedAt: Date
 }
@@ -139,6 +142,17 @@ function kilometersToMiles(value: number | null) {
   return value === null ? null : value * 0.621371
 }
 
+function pascalsToHectopascals(value: number | null) {
+  return value === null ? null : value / 100
+}
+
+function isLiveDecisionWindow(target: Date, now: Date, observation: Observation | null) {
+  if (!observation || now.getTime() - observation.time.getTime() > 90 * 60 * 1000) return false
+  const opens = target.getTime() - 75 * 60 * 1000
+  const closes = target.getTime() + 4 * 60 * 60 * 1000
+  return now.getTime() >= opens && now.getTime() <= closes
+}
+
 async function fetchLatestObservation(stationsUrl: string): Promise<Observation | null> {
   try {
     const stationsResponse = await fetch(stationsUrl, { headers: { Accept: 'application/geo+json' } })
@@ -160,6 +174,8 @@ async function fetchLatestObservation(stationsUrl: string): Promise<Observation 
         temperature: celsiusToFahrenheit(properties.temperature?.value ?? null),
         humidity: properties.relativeHumidity?.value ?? null,
         wind: kilometersToMiles(properties.windSpeed?.value ?? null),
+        pressure: pascalsToHectopascals(properties.barometricPressure?.value ?? null),
+        cloudCover: cloudCoverFromLayers((properties.cloudLayers ?? []) as CloudLayer[]),
       } satisfies Observation
     }))
 
@@ -185,32 +201,32 @@ function plainDecision(outlook: Outlook | null) {
 }
 
 function predictionReason(outlook: Outlook | null) {
-  if (!outlook || outlook.wbgt === null) return 'Waiting for the exact-location WBGT forecast.'
+  if (!outlook || outlook.prediction.decisionWbgt === null) return 'Waiting for the exact-location WBGT forecast.'
   const { prediction } = outlook
-  if (prediction.state === 'no') {
-    if (outlook.wbgt >= UIL_NO_PRACTICE_WBGT) return `NO — the NWS forecast itself reaches the ${UIL_NO_PRACTICE_WBGT}°F no-practice line.`
-    if (prediction.liveWarning) return `NO — live air temperature is running ${prediction.liveTemperatureGap?.toFixed(1)}°F hotter than the model.`
-    return `NO — the forecast is below the line, but the conservative planning ceiling reaches ${prediction.planningCeiling?.toFixed(1)}°F.`
-  }
-  return `YES — the conservative ${prediction.planningCeiling?.toFixed(1)}°F planning ceiling stays ${prediction.ceilingMargin?.toFixed(1)}° below the UIL line.`
+  const source = prediction.decisionSource === 'live' ? 'The live weather estimate' : 'The campus forecast'
+  const margin = prediction.decisionMargin ?? 0
+  return prediction.state === 'no'
+    ? `NO — ${source.toLowerCase()} is ${Math.abs(margin).toFixed(1)}°F over the UIL line.`
+    : `YES — ${source.toLowerCase()} is ${margin.toFixed(1)}°F below the UIL line.`
 }
 
 function DecisionMeter({ outlook }: { outlook: Outlook | null }) {
   const minimum = 78
   const maximum = 100
-  const wbgt = outlook?.wbgt ?? null
-  const ceiling = outlook?.prediction.planningCeiling ?? null
-  const marker = Math.max(0, Math.min(100, (((wbgt ?? minimum) - minimum) / (maximum - minimum)) * 100))
-  const ceilingMarker = Math.max(0, Math.min(100, (((ceiling ?? minimum) - minimum) / (maximum - minimum)) * 100))
+  const forecastWbgt = outlook?.wbgt ?? null
+  const decisionWbgt = outlook?.prediction.decisionWbgt ?? null
+  const forecastMarker = Math.max(0, Math.min(100, (((forecastWbgt ?? minimum) - minimum) / (maximum - minimum)) * 100))
+  const decisionMarker = Math.max(0, Math.min(100, (((decisionWbgt ?? minimum) - minimum) / (maximum - minimum)) * 100))
   const line = ((UIL_NO_PRACTICE_WBGT - minimum) / (maximum - minimum)) * 100
-  const rangeStart = Math.min(marker, ceilingMarker)
-  const rangeWidth = Math.max(0, ceilingMarker - marker)
-  const margin = outlook?.prediction.ceilingMargin ?? null
+  const comparisonStart = Math.min(forecastMarker, decisionMarker)
+  const comparisonWidth = Math.abs(decisionMarker - forecastMarker)
+  const margin = outlook?.prediction.decisionMargin ?? null
+  const isLive = outlook?.prediction.decisionSource === 'live'
   const message = margin === null
     ? 'Waiting for the forecast'
     : margin <= 0
-      ? `Planning ceiling is ${Math.abs(margin).toFixed(1)}°F over the line`
-      : `Planning ceiling is ${margin.toFixed(1)}°F below the line`
+      ? `${Math.abs(margin).toFixed(1)}°F over the no-practice line`
+      : `${margin.toFixed(1)}°F below the no-practice line`
 
   return (
     <div className="rounded-[1.75rem] border border-white/25 bg-black/65 p-5 shadow-2xl backdrop-blur-xl sm:p-7 lg:p-8">
@@ -220,28 +236,28 @@ function DecisionMeter({ outlook }: { outlook: Outlook | null }) {
           <h2 className="mt-3 text-[clamp(2rem,4vw,4rem)] font-medium leading-[0.9] tracking-[-0.055em]">HOW CLOSE ARE WE<br />TO NO PRACTICE?</h2>
         </div>
         <div className="md:col-span-3 md:border-l md:border-white/15 md:pl-6">
-          <div className="text-[9px] font-semibold tracking-[0.12em] text-white/45">PLANNING CEILING</div>
-          <div className="mt-2 text-5xl font-medium tracking-[-0.06em] sm:text-6xl">{ceiling?.toFixed(1) ?? '—'}°</div>
-          <p className="mt-2 text-[10px] leading-4 text-white/45">Not a measurement. A conservative upper estimate.</p>
+          <div className="text-[9px] font-semibold tracking-[0.12em] text-white/45">{isLive ? 'LIVE CONDITIONS ESTIMATE' : 'CAMPUS FORECAST'}</div>
+          <div className="mt-2 text-5xl font-medium tracking-[-0.06em] sm:text-6xl">{decisionWbgt?.toFixed(1) ?? '—'}°</div>
+          <p className="mt-2 text-[10px] leading-4 text-white/45">{isLive ? 'Uses current cloud cover, wind, humidity and temperature.' : 'NWS WBGT for the exact practice location.'}</p>
         </div>
         <div className="md:col-span-4 md:text-right">
           <div className="text-[9px] font-semibold tracking-[0.12em] text-white/45">RISK DISTANCE</div>
           <div className="mt-2 text-xl font-semibold sm:text-2xl">{message}</div>
         </div>
       </div>
-      <div className="relative mt-10 h-4 bg-white/20" role="img" aria-label={`NWS forecast ${wbgt?.toFixed(1) ?? 'unavailable'} degrees WBGT, conservative planning ceiling ${ceiling?.toFixed(1) ?? 'unavailable'} degrees, no outdoor practice line ${UIL_NO_PRACTICE_WBGT} degrees WBGT`}>
+      <div className="relative mt-10 h-4 bg-white/20" role="img" aria-label={`${isLive ? 'Live conditions estimate' : 'NWS forecast'} ${decisionWbgt?.toFixed(1) ?? 'unavailable'} degrees WBGT, no outdoor practice line ${UIL_NO_PRACTICE_WBGT} degrees WBGT`}>
         <div className="absolute inset-y-0 right-0 bg-hawk/80" style={{ left: `${line}%` }} />
-        {wbgt !== null && ceiling !== null && <div className="absolute inset-y-0 bg-[#f5b7c3]/60" style={{ left: `${rangeStart}%`, width: `${rangeWidth}%` }} />}
+        {isLive && forecastWbgt !== null && decisionWbgt !== null && <div className="absolute inset-y-0 bg-[#f5b7c3]/55" style={{ left: `${comparisonStart}%`, width: `${comparisonWidth}%` }} />}
         <div className="absolute -bottom-3 -top-3 w-px bg-white" style={{ left: `${line}%` }} />
-        <div className="absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-white bg-black" style={{ left: `${marker}%` }} />
-        <div className="absolute top-1/2 h-7 w-2 -translate-x-1/2 -translate-y-1/2 bg-[#f5b7c3] shadow-[0_0_24px_rgba(200,16,46,.9)]" style={{ left: `${ceilingMarker}%` }} />
+        {isLive && forecastWbgt !== null && <div className="absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/70 bg-black" style={{ left: `${forecastMarker}%` }} />}
+        <div className="absolute top-1/2 h-8 w-2 -translate-x-1/2 -translate-y-1/2 bg-[#f5b7c3] shadow-[0_0_24px_rgba(200,16,46,.9)]" style={{ left: `${decisionMarker}%` }} />
       </div>
       <div className="mt-4 grid grid-cols-3 gap-3 text-[9px] font-semibold tracking-[0.08em] text-white/50">
-        <span><i className="mr-2 inline-block h-3 w-3 rounded-full border-2 border-white bg-black align-middle" />NWS {wbgt?.toFixed(1) ?? '—'}°</span>
-        <span className="text-center"><i className="mr-2 inline-block h-3 w-1 bg-[#f5b7c3] align-middle" />CEILING {ceiling?.toFixed(1) ?? '—'}°</span>
+        <span><i className="mr-2 inline-block h-3 w-3 rounded-full border-2 border-white bg-black align-middle" />NWS {forecastWbgt?.toFixed(1) ?? '—'}°</span>
+        <span className="text-center"><i className="mr-2 inline-block h-3 w-1 bg-[#f5b7c3] align-middle" />{isLive ? 'LIVE' : 'DECISION'} {decisionWbgt?.toFixed(1) ?? '—'}°</span>
         <span className="text-right">{UIL_NO_PRACTICE_WBGT}° · NO PRACTICE</span>
       </div>
-      <div className="mt-6 flex flex-wrap gap-x-6 gap-y-2 border-t border-white/15 pt-4 text-[10px] text-white/50"><span><strong className="text-white">Forecast</strong> is the exact-campus NWS value</span><span><strong className="text-white">Ceiling</strong> includes nearby-grid spread + {INCIDENT_SAFETY_ALLOWANCE}°F incident allowance</span><span><strong className="text-white">The school</strong> makes the official call</span></div>
+      <div className="mt-6 flex flex-wrap gap-x-6 gap-y-2 border-t border-white/15 pt-4 text-[10px] text-white/50"><span><strong className="text-white">Earlier</strong> the exact-campus forecast drives the answer</span><span><strong className="text-white">Near practice</strong> live sun/cloud, wind, humidity and temperature take over</span><span><strong className="text-white">The school</strong> makes the official call</span></div>
     </div>
   )
 }
@@ -296,8 +312,22 @@ export default function App() {
       const properties = grid.properties
       const nearbyProperties = nearbyGrid.properties
       const periods: ForecastPeriod[] = daily?.properties?.periods ?? []
-      const modeledCurrentTarget = observation?.time ?? new Date()
-      const modeledCurrentAirTemperature = toFahrenheit(gridValueAt(properties.temperature, modeledCurrentTarget), properties.temperature?.uom)
+      const now = new Date()
+      const liveWeatherTime = observation?.time ?? now
+      const gridCloudCoverNow = gridValueAt(properties.skyCover, liveWeatherTime)
+      const liveCloudCover = observation?.cloudCover ?? gridCloudCoverNow
+      const liveWbgt = observation?.temperature !== null && observation?.temperature !== undefined
+        && observation.humidity !== null && observation.wind !== null && liveCloudCover !== null
+        ? estimateOutdoorWbgt({
+            airTemperatureF: observation.temperature,
+            relativeHumidity: observation.humidity,
+            windMph: observation.wind,
+            cloudCover: liveCloudCover,
+            pressureHpa: observation.pressure,
+            latitude: PRACTICE_COORDINATES.latitude,
+            at: observation.time,
+          })
+        : null
 
       const outlooks = Array.from({ length: 7 }, (_, index): Outlook => {
         const target = targetForOffset(index, 14, 45)
@@ -311,9 +341,8 @@ export default function App() {
         const prediction = buildPracticePrediction({
           forecastWbgt: wbgt,
           nearbyWbgt,
-          observedAirTemperature: observation?.temperature ?? null,
-          modeledCurrentAirTemperature,
-          useLiveSignal: index === 0,
+          liveWbgt,
+          useLiveSignal: index === 0 && isLiveDecisionWindow(target, now, observation),
         })
         const condition = rainChance >= 40
           ? (/thunder/i.test(dayPeriod?.shortForecast ?? '') ? 'Thunderstorms likely' : 'Chance of showers')
@@ -337,7 +366,7 @@ export default function App() {
           humidity,
           wind: dayPeriod?.windSpeed ?? '—',
           cloudCover,
-          flag: prediction.planningCeiling === null ? null : getUilFlag(prediction.planningCeiling),
+          flag: prediction.decisionWbgt === null ? null : getUilFlag(prediction.decisionWbgt),
           nearbyWbgt,
           prediction,
         }
@@ -346,14 +375,14 @@ export default function App() {
       const sourceUpdatedAt = properties.updateTime ? new Date(properties.updateTime) : null
       const nextWeather: WeatherState = {
         outlooks,
-        currentWbgt: toFahrenheit(gridValueAt(properties.wetBulbGlobeTemperature, new Date()), properties.wetBulbGlobeTemperature?.uom),
+        liveWbgt,
+        liveCloudCover,
         office: points.properties.cwa ?? null,
         gridId: points.properties.forecastGridData.replace('https://api.weather.gov/gridpoints/', ''),
         nearbyGridId: nearbyPoints.properties.forecastGridData.replace('https://api.weather.gov/gridpoints/', ''),
         coordinates: PRACTICE_COORDINATES,
         nearbyCoordinates,
         observation,
-        modeledCurrentAirTemperature,
         sourceUpdatedAt,
         updatedAt: new Date(),
       }
@@ -369,7 +398,8 @@ export default function App() {
           target: today.date.toISOString(),
           forecastWbgt: today.wbgt,
           nearbyWbgt: today.nearbyWbgt,
-          planningCeiling: today.prediction.planningCeiling,
+          decisionWbgt: today.prediction.decisionWbgt,
+          decisionSource: today.prediction.decisionSource,
           state: today.prediction.state,
         }
         window.localStorage.setItem(storageKey, JSON.stringify(mergeForecastHistory(stored, snapshot)))
@@ -432,9 +462,9 @@ export default function App() {
     <main className="min-h-screen bg-[#0a0d0f] font-sans text-white">
       <section className="relative isolate flex min-h-[880px] flex-col overflow-hidden px-4 pb-4 pt-4 sm:min-h-[900px] sm:px-8 sm:pb-6 sm:pt-5 lg:min-h-[940px] lg:px-12">
         <WeatherBackdrop
-          cloudCover={selected?.cloudCover ?? 35}
+          cloudCover={selectedIndex === 0 && selected?.prediction.decisionSource === 'live' ? weather?.liveCloudCover ?? selected.cloudCover : selected?.cloudCover ?? 35}
           rainChance={selected?.rainChance ?? 0}
-          condition={selected?.condition ?? 'Sunny'}
+          condition={selectedIndex === 0 && selected?.prediction.decisionSource === 'live' ? weather?.observation?.condition ?? selected.condition : selected?.condition ?? 'Sunny'}
           progress={scrollProgress}
           reduceMotion={reduceMotion}
         />
@@ -496,7 +526,7 @@ export default function App() {
           {selected?.prediction.state === 'no' && (
             <div className="mt-4 flex items-start gap-3 rounded-2xl border border-white/25 bg-hawk px-5 py-4 text-white shadow-xl">
               <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0" />
-              <p className="text-sm font-semibold leading-5">Plan for no outdoor practice unless the school announces otherwise. This predictor chooses NO whenever the conservative ceiling crosses the UIL line.</p>
+              <p className="text-sm font-semibold leading-5">Plan for no outdoor practice unless the school announces otherwise. This predictor chooses NO when the active live estimate or campus forecast crosses the UIL line.</p>
             </div>
           )}
 
@@ -508,12 +538,11 @@ export default function App() {
               </div>
               <div className="mt-6 grid grid-cols-2 border-y border-white/15 py-5">
                 <div><span className="text-[9px] tracking-[0.1em] text-white/45">AIR TEMPERATURE</span><strong className="mt-2 block text-4xl font-medium tracking-[-0.06em]">{weather?.observation?.temperature?.toFixed(0) ?? '—'}°</strong></div>
-                <div className="border-l border-white/15 pl-5"><span className="text-[9px] tracking-[0.1em] text-white/45">ESTIMATED WBGT</span><strong className="mt-2 block text-4xl font-medium tracking-[-0.06em]">{weather?.currentWbgt?.toFixed(1) ?? '—'}°</strong></div>
+                <div className="border-l border-white/15 pl-5"><span className="text-[9px] tracking-[0.1em] text-white/45">LIVE WBGT ESTIMATE</span><strong className="mt-2 block text-4xl font-medium tracking-[-0.06em]">{weather?.liveWbgt?.toFixed(1) ?? '—'}°</strong></div>
               </div>
               <div className="mt-5 flex items-center gap-3"><WeatherGlyph condition={weather?.observation?.condition ?? 'Current'} className="h-6 w-6 text-[#ffd278]" /><strong>{weather?.observation?.condition ?? 'Loading conditions'}</strong></div>
-              <div className="mt-5 grid grid-cols-2 text-xs"><div><Droplets className="mb-2 h-4 w-4 text-white/45" /><strong>{weather?.observation?.humidity?.toFixed(0) ?? '—'}%</strong><span className="block text-[9px] text-white/40">HUMIDITY</span></div><div><Wind className="mb-2 h-4 w-4 text-white/45" /><strong>{weather?.observation?.wind?.toFixed(0) ?? '—'} mph</strong><span className="block text-[9px] text-white/40">WIND</span></div></div>
-              {selected?.prediction.liveTemperatureGap !== null && selected?.prediction.liveTemperatureGap !== undefined && <p className={`mt-5 text-xs leading-5 ${selected.prediction.liveWarning ? 'font-semibold text-[#ffd278]' : 'text-white/50'}`}>The station is {Math.abs(selected.prediction.liveTemperatureGap).toFixed(1)}°F {selected.prediction.liveTemperatureGap >= 0 ? 'hotter' : 'cooler'} than the NWS grid expected right now.</p>}
-              <p className="mt-3 text-[10px] leading-4 text-white/45">Air temperature is observed at the nearest reporting station. Current WBGT is modeled at campus, not measured by the school sensor.</p>
+              <div className="mt-5 grid grid-cols-3 text-xs"><div><Droplets className="mb-2 h-4 w-4 text-white/45" /><strong>{weather?.observation?.humidity?.toFixed(0) ?? '—'}%</strong><span className="block text-[9px] text-white/40">HUMIDITY</span></div><div><Wind className="mb-2 h-4 w-4 text-white/45" /><strong>{weather?.observation?.wind?.toFixed(0) ?? '—'} mph</strong><span className="block text-[9px] text-white/40">WIND</span></div><div><Cloud className="mb-2 h-4 w-4 text-white/45" /><strong>{weather?.liveCloudCover?.toFixed(0) ?? '—'}%</strong><span className="block text-[9px] text-white/40">CLOUDS</span></div></div>
+              <p className="mt-5 text-[10px] leading-4 text-white/45">The live estimate now responds to observed temperature, humidity, breeze and cloud cover. It is still not the school’s field-sensor reading.</p>
             </section>
 
             <section className="rounded-[1.5rem] border border-white/20 bg-black/50 p-5 backdrop-blur-xl sm:p-6">
@@ -533,13 +562,15 @@ export default function App() {
             </section>
 
             <section className="rounded-[1.5rem] border border-white/20 bg-white/90 p-5 text-black backdrop-blur-xl sm:p-6">
-              <div><p className="text-[10px] font-semibold tracking-[0.12em] text-hawk">3 · CONSERVATIVE PLANNING CALL</p><h2 className="mt-2 text-2xl font-medium">What families should plan for</h2></div>
-              <div className="mt-6 border-y border-black/15 py-5"><span className="text-[9px] tracking-[0.1em] text-black/45">PLANNING CEILING</span><strong className="mt-2 block text-5xl tracking-[-0.06em]">{selected?.prediction.planningCeiling?.toFixed(1) ?? '—'}°</strong><span className="mt-2 block text-xl font-semibold">{plainDecision(selected)}</span><span className="mt-3 inline-flex px-2 py-1 text-[10px] font-bold text-white" style={{ backgroundColor: accent }}>{selected?.prediction.state === 'no' ? 'NO PRACTICE PREDICTED' : status?.name ?? 'Loading'}</span></div>
+              <div><p className="text-[10px] font-semibold tracking-[0.12em] text-hawk">3 · PRACTICE PREDICTION</p><h2 className="mt-2 text-2xl font-medium">What families should plan for</h2></div>
+              <div className="mt-6 border-y border-black/15 py-5"><span className="text-[9px] tracking-[0.1em] text-black/45">{selected?.prediction.decisionSource === 'live' ? 'LIVE CONDITIONS WBGT' : 'FORECAST WBGT'}</span><strong className="mt-2 block text-5xl tracking-[-0.06em]">{selected?.prediction.decisionWbgt?.toFixed(1) ?? '—'}°</strong><span className="mt-2 block text-xl font-semibold">{plainDecision(selected)}</span><span className="mt-3 inline-flex px-2 py-1 text-[10px] font-bold text-white" style={{ backgroundColor: accent }}>{selected?.prediction.state === 'no' ? 'NO PRACTICE PREDICTED' : status?.name ?? 'Loading'}</span></div>
               {selected?.prediction.state === 'no'
                 ? <ul className="mt-5 grid gap-2 text-sm leading-5 text-black/65"><li className="flex gap-2"><span className="font-bold text-hawk">•</span><span>Plan for no outdoor practice unless the school confirms otherwise.</span></li></ul>
                 : status && <ul className="mt-5 grid gap-2 text-sm leading-5 text-black/65">{status.rules.map((rule) => <li key={rule} className="flex gap-2"><span className="font-bold text-hawk">•</span><span>{rule}</span></li>)}</ul>}
               <div className="mt-6 border-t border-black/15 pt-5 text-xs leading-5 text-black/55">
-                The ceiling uses the hotter local NWS grid plus a temporary {INCIDENT_SAFETY_ALLOWANCE}°F allowance based on the September 16 miss. It is deliberately conservative and is not an official WBGT reading.
+                {selected?.prediction.decisionSource === 'live'
+                  ? 'Near practice time, current clouds and wind replace the earlier forecast assumptions. The result is a weather-derived estimate, not an official field reading.'
+                  : 'Earlier in the day and for future dates, the exact-campus NWS WBGT forecast drives this answer. Live conditions take over near practice time.'}
               </div>
             </section>
           </div>
@@ -564,10 +595,10 @@ export default function App() {
                   <span className="text-xs font-semibold">{outlook.day}</span>
                   <span className="ml-2 text-[10px] text-white/40">{outlook.dateLabel}</span>
                   <WeatherGlyph condition={outlook.condition} className="my-3 h-5 w-5 text-white/80" />
-                  <span className="block text-xl font-medium tracking-[-0.05em]">{outlook.prediction.planningCeiling?.toFixed(1) ?? '—'}° <small className="text-[8px] font-semibold tracking-[0.08em] text-white/40">CEILING</small></span>
+                  <span className="block text-xl font-medium tracking-[-0.05em]">{outlook.prediction.decisionWbgt?.toFixed(1) ?? '—'}° <small className="text-[8px] font-semibold tracking-[0.08em] text-white/40">{outlook.prediction.decisionSource === 'live' ? 'LIVE' : 'FORECAST'}</small></span>
                   <span className="mt-0.5 block text-[9px] text-white/45">NWS {outlook.wbgt?.toFixed(1) ?? '—'}°</span>
                   <span className="mt-1 block text-[10px] font-medium" style={{ color: meta?.color ?? 'rgba(255,255,255,.45)' }}>{plainDecision(outlook)}</span>
-                  {outlook.prediction.ceilingMargin !== null && <span className="mt-1 block text-[9px] text-white/45">{outlook.prediction.ceilingMargin <= 0 ? `${Math.abs(outlook.prediction.ceilingMargin).toFixed(1)}° OVER LINE` : `${outlook.prediction.ceilingMargin.toFixed(1)}° BELOW LINE`}</span>}
+                  {outlook.prediction.decisionMargin !== null && <span className="mt-1 block text-[9px] text-white/45">{outlook.prediction.decisionMargin <= 0 ? `${Math.abs(outlook.prediction.decisionMargin).toFixed(1)}° OVER LINE` : `${outlook.prediction.decisionMargin.toFixed(1)}° BELOW LINE`}</span>}
                 </button>
               )
             })}
@@ -618,7 +649,7 @@ export default function App() {
             <p className="mt-8 max-w-md text-base leading-7 text-white/65">That is why this page keeps checking. The week gives families a useful signal; the school’s near-practice reading reflects the actual field.</p>
           </div>
           <div className="grid gap-4 self-end lg:col-span-4 lg:col-start-9">
-            <div className="rounded-[1.5rem] border border-white/20 bg-black/40 p-6 backdrop-blur-xl"><Database className="h-6 w-6 text-[#f0a9b7]" /><p className="mt-10 text-[10px] font-bold tracking-[0.12em] text-white/45">THE PREDICTOR KNOWS</p><h3 className="mt-2 text-2xl font-medium">The planning risk</h3><ul className="mt-4 grid gap-2 text-sm leading-5 text-white/60"><li>• Exact-campus NWS WBGT</li><li>• A surrounding-grid cross-check</li><li>• Nearest live station versus model</li><li>• Conservative ceiling and UIL line</li></ul></div>
+            <div className="rounded-[1.5rem] border border-white/20 bg-black/40 p-6 backdrop-blur-xl"><Database className="h-6 w-6 text-[#f0a9b7]" /><p className="mt-10 text-[10px] font-bold tracking-[0.12em] text-white/45">THE PREDICTOR KNOWS</p><h3 className="mt-2 text-2xl font-medium">The planning risk</h3><ul className="mt-4 grid gap-2 text-sm leading-5 text-white/60"><li>• Exact-campus NWS WBGT</li><li>• A surrounding-grid cross-check</li><li>• Current temperature and humidity</li><li>• Current breeze and cloud cover</li></ul></div>
             <div className="rounded-[1.5rem] border border-white/20 bg-white/90 p-6 text-black backdrop-blur-xl"><ShieldCheck className="h-6 w-6 text-hawk" /><p className="mt-10 text-[10px] font-bold tracking-[0.12em] text-black/45">THE PREDICTOR CANNOT KNOW</p><h3 className="mt-2 text-2xl font-medium">The official status</h3><ul className="mt-4 grid gap-2 text-sm leading-5 text-black/60"><li>• The school’s exact field reading</li><li>• Lightning, air quality or field closures</li><li>• Athlete condition or cumulative workload</li><li>• Coach, trainer or campus decisions</li></ul></div>
           </div>
         </div>
@@ -639,7 +670,7 @@ export default function App() {
                 <div className="border-b border-black/15 py-6 sm:border-r sm:pr-6"><CheckCircle2 className="h-5 w-5 text-hawk" /><span className="mt-6 block text-[10px] font-bold tracking-[0.12em] text-black/45">NEAREST OBSERVATION</span><strong className="mt-2 block text-xl">{weather?.observation?.stationName ?? 'Loading station'}</strong><span className="mt-1 block text-xs text-black/50">{weather?.observation ? `${weather.observation.station} · ${observationTime} · ${weather.observation.temperature?.toFixed(0) ?? '—'}°F` : 'Live observation unavailable'}</span></div>
                 <div className="border-b border-black/15 py-6 sm:pl-6"><RefreshCw className="h-5 w-5 text-hawk" /><span className="mt-6 block text-[10px] font-bold tracking-[0.12em] text-black/45">FRESHNESS</span><strong className="mt-2 block text-xl">NWS issued {sourceUpdated}</strong><span className="mt-1 block text-xs text-black/50">This browser checked at {updated}. NWS may not publish new forecast data every five minutes.</span></div>
               </div>
-              <p className="mt-7 max-w-2xl text-sm leading-6 text-black/60">The predictor now anchors the forecast to the Rockwall-Heath campus, checks the surrounding Heath grid, and compares the nearest live station with what the model expected at that moment. The planning ceiling then adds a clearly labeled {INCIDENT_SAFETY_ALLOWANCE}°F safety allowance because the September 16 forecast missed the school’s cancellation reading by at least several degrees. One incident is not enough to call this a permanent correction.</p>
+              <p className="mt-7 max-w-2xl text-sm leading-6 text-black/60">The predictor anchors the outlook to the Rockwall-Heath campus and checks the surrounding Heath grid. Near practice time it switches from the earlier forecast to a fresh WBGT estimate built from the nearest observation’s temperature, humidity, wind and cloud layers. There is no fixed incident buffer: clear, still conditions can push the estimate up while clouds and breeze can pull it down.</p>
               <div className="mt-6 flex flex-wrap gap-6"><a href="https://www.weather.gov/news/211009-WBGT" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 border-b border-black pb-1 text-xs font-bold tracking-[0.08em]">HOW NWS CALCULATES WBGT <ExternalLink className="h-3.5 w-3.5" /></a><a href="https://convergence.unc.edu/tools/wbgt/" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 border-b border-black pb-1 text-xs font-bold tracking-[0.08em]">WHY WBGT FORECASTS VARY <ExternalLink className="h-3.5 w-3.5" /></a></div>
             </div>
           </div>
