@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CheckCircle2, CircleAlert, Cloud, CloudLightning, CloudRain, CloudSun, Database, Droplets, ExternalLink, Fan, Gauge, GlassWater, MapPin, RefreshCw, ShieldCheck, Shirt, Snowflake, Sun, Wind } from 'lucide-react'
+import { CheckCircle2, CircleAlert, Cloud, CloudLightning, CloudRain, CloudSun, Database, Droplets, ExternalLink, Fan, Gauge, GlassWater, MapPin, RefreshCw, ShieldCheck, Shirt, Snowflake, Sun, TriangleAlert, Wind } from 'lucide-react'
 import WeatherBackdrop from './WeatherBackdrop'
+import { buildPracticePrediction, getUilFlag, INCIDENT_SAFETY_ALLOWANCE, mergeForecastHistory, type Flag, type ForecastSnapshot, type PracticePrediction, UIL_NO_PRACTICE_WBGT } from './prediction'
 const ZIP_CODE = '75032'
 const TIME_ZONE = 'America/Chicago'
 const AUTO_REFRESH_MS = 5 * 60 * 1000
-const FALLBACK_COORDINATES = { latitude: 32.835, longitude: -96.474 }
+const PRACTICE_COORDINATES = { latitude: 32.845676, longitude: -96.470486 }
+const FALLBACK_NEARBY_COORDINATES = { latitude: 32.886, longitude: -96.4095 }
+const PRACTICE_LOCATION_NAME = 'Rockwall-Heath High School'
 
-type Flag = 'green' | 'yellow' | 'orange' | 'red' | 'black'
 type GridValue = { validTime: string; value: number | null }
 type GridField = { uom?: string; values?: GridValue[] }
 type ForecastPeriod = {
@@ -33,6 +35,8 @@ type Outlook = {
   wind: string
   cloudCover: number
   flag: Flag | null
+  nearbyWbgt: number | null
+  prediction: PracticePrediction
 }
 type Observation = {
   station: string
@@ -48,8 +52,12 @@ type WeatherState = {
   currentWbgt: number | null
   office: string | null
   gridId: string
+  nearbyGridId: string
   coordinates: { latitude: number; longitude: number }
+  nearbyCoordinates: { latitude: number; longitude: number }
   observation: Observation | null
+  modeledCurrentAirTemperature: number | null
+  sourceUpdatedAt: Date | null
   updatedAt: Date
 }
 
@@ -161,14 +169,6 @@ async function fetchLatestObservation(stationsUrl: string): Promise<Observation 
   }
 }
 
-function getFlag(wbgt: number): Flag {
-  if (wbgt < 82) return 'green'
-  if (wbgt < 87) return 'yellow'
-  if (wbgt <= 90) return 'orange'
-  if (wbgt < 92.1) return 'red'
-  return 'black'
-}
-
 function WeatherGlyph({ condition, className = 'h-6 w-6' }: { condition: string; className?: string }) {
   if (/thunder|storm/i.test(condition)) return <CloudLightning className={className} />
   if (/rain|shower/i.test(condition)) return <CloudRain className={className} />
@@ -178,64 +178,71 @@ function WeatherGlyph({ condition, className = 'h-6 w-6' }: { condition: string;
 }
 
 function plainDecision(outlook: Outlook | null) {
-  if (!outlook?.flag) return 'FORECAST PENDING'
-  if (outlook.flag === 'black') return 'NO PRACTICE'
-  if (outlook.flag === 'red') return 'YES · CLOSE CALL'
-  if (outlook.flag === 'orange') return 'YES · MORE BREAKS'
-  if (outlook.flag === 'yellow') return 'YES · HEAT WATCH'
-  return 'YES · NORMAL PRACTICE'
+  if (!outlook) return 'FORECAST PENDING'
+  if (outlook.prediction.state === 'likely-off') return 'LIKELY OFF'
+  if (outlook.prediction.state === 'watch') return 'WATCH CLOSELY'
+  if (outlook.prediction.state === 'likely-on') return 'LIKELY ON'
+  return 'FORECAST PENDING'
 }
 
 function predictionReason(outlook: Outlook | null) {
-  if (outlook?.wbgt === null || outlook?.wbgt === undefined) return 'Waiting for the predicted WBGT.'
-  if (outlook.wbgt >= 92.1) return `NO — the predicted WBGT is ${outlook.wbgt.toFixed(1)}°F, at or above the 92.1°F UIL limit.`
-  return `YES — the predicted WBGT is ${outlook.wbgt.toFixed(1)}°F, ${(92.1 - outlook.wbgt).toFixed(1)}° below the 92.1°F UIL limit.`
+  if (!outlook || outlook.wbgt === null) return 'Waiting for the exact-location WBGT forecast.'
+  const { prediction } = outlook
+  if (prediction.state === 'likely-off') return `The NWS forecast itself reaches the ${UIL_NO_PRACTICE_WBGT}°F no-practice line.`
+  if (prediction.state === 'watch') {
+    if (prediction.liveWarning) return `Live air temperature is running ${prediction.liveTemperatureGap?.toFixed(1)}°F hotter than the model. Treat this as a cancellation risk.`
+    return `The NWS forecast is below the line, but the conservative planning ceiling reaches ${prediction.planningCeiling?.toFixed(1)}°F.`
+  }
+  return `Even the conservative ${prediction.planningCeiling?.toFixed(1)}°F planning ceiling stays ${prediction.ceilingMargin?.toFixed(1)}° below the UIL line.`
 }
 
-function DecisionMeter({ wbgt, day }: { wbgt: number | null; day: string }) {
+function DecisionMeter({ outlook }: { outlook: Outlook | null }) {
   const minimum = 78
-  const maximum = 96
-  const cancellation = 92.1
-  const value = wbgt ?? minimum
-  const marker = Math.max(0, Math.min(100, ((value - minimum) / (maximum - minimum)) * 100))
-  const line = ((cancellation - minimum) / (maximum - minimum)) * 100
-  const margin = wbgt === null ? null : cancellation - wbgt
+  const maximum = 100
+  const wbgt = outlook?.wbgt ?? null
+  const ceiling = outlook?.prediction.planningCeiling ?? null
+  const marker = Math.max(0, Math.min(100, (((wbgt ?? minimum) - minimum) / (maximum - minimum)) * 100))
+  const ceilingMarker = Math.max(0, Math.min(100, (((ceiling ?? minimum) - minimum) / (maximum - minimum)) * 100))
+  const line = ((UIL_NO_PRACTICE_WBGT - minimum) / (maximum - minimum)) * 100
+  const rangeStart = Math.min(marker, ceilingMarker)
+  const rangeWidth = Math.max(0, ceilingMarker - marker)
+  const margin = outlook?.prediction.ceilingMargin ?? null
   const message = margin === null
     ? 'Waiting for the forecast'
     : margin <= 0
-      ? `${Math.abs(margin).toFixed(1)}°F above the UIL WBGT limit`
-      : margin <= 1.5
-        ? `Close call — only ${margin.toFixed(1)}°F below the UIL WBGT limit`
-        : margin <= 5
-          ? `Keep watching — ${margin.toFixed(1)}°F below the UIL WBGT limit`
-          : `${margin.toFixed(1)}°F below the UIL WBGT limit`
+      ? `Planning ceiling is ${Math.abs(margin).toFixed(1)}°F over the line`
+      : `Planning ceiling is ${margin.toFixed(1)}°F below the line`
 
   return (
-    <div className="rounded-[1.75rem] border border-white/25 bg-black/55 p-5 shadow-2xl backdrop-blur-xl sm:p-7 lg:p-8">
+    <div className="rounded-[1.75rem] border border-white/25 bg-black/65 p-5 shadow-2xl backdrop-blur-xl sm:p-7 lg:p-8">
       <div className="grid gap-6 md:grid-cols-12 md:items-end">
         <div className="md:col-span-5">
-          <div className="text-[10px] font-semibold tracking-[0.13em] text-[#f0a9b7]">THE DECISION METER · {day.toUpperCase()} AROUND 3 PM</div>
+          <div className="text-[10px] font-semibold tracking-[0.13em] text-[#f0a9b7]">THE DECISION METER · {(outlook?.day ?? 'TODAY').toUpperCase()} AROUND 3 PM</div>
           <h2 className="mt-3 text-[clamp(2rem,4vw,4rem)] font-medium leading-[0.9] tracking-[-0.055em]">HOW CLOSE ARE WE<br />TO NO PRACTICE?</h2>
         </div>
         <div className="md:col-span-3 md:border-l md:border-white/15 md:pl-6">
-          <div className="text-[9px] font-semibold tracking-[0.12em] text-white/45">NWS PREDICTED WBGT</div>
-          <div className="mt-2 text-5xl font-medium tracking-[-0.06em] sm:text-6xl">{wbgt?.toFixed(1) ?? '—'}°</div>
+          <div className="text-[9px] font-semibold tracking-[0.12em] text-white/45">PLANNING CEILING</div>
+          <div className="mt-2 text-5xl font-medium tracking-[-0.06em] sm:text-6xl">{ceiling?.toFixed(1) ?? '—'}°</div>
+          <p className="mt-2 text-[10px] leading-4 text-white/45">Not a measurement. A conservative upper estimate.</p>
         </div>
         <div className="md:col-span-4 md:text-right">
-          <div className="text-[9px] font-semibold tracking-[0.12em] text-white/45">DISTANCE FROM UIL LIMIT</div>
+          <div className="text-[9px] font-semibold tracking-[0.12em] text-white/45">RISK DISTANCE</div>
           <div className="mt-2 text-xl font-semibold sm:text-2xl">{message}</div>
         </div>
       </div>
-      <div className="relative mt-10 h-3 bg-white/25" role="img" aria-label={`Predicted WBGT ${wbgt?.toFixed(1) ?? 'unavailable'} degrees; no outdoor practice limit 92.1 degrees WBGT`}>
+      <div className="relative mt-10 h-4 bg-white/20" role="img" aria-label={`NWS forecast ${wbgt?.toFixed(1) ?? 'unavailable'} degrees WBGT, conservative planning ceiling ${ceiling?.toFixed(1) ?? 'unavailable'} degrees, no outdoor practice line ${UIL_NO_PRACTICE_WBGT} degrees WBGT`}>
         <div className="absolute inset-y-0 right-0 bg-hawk/80" style={{ left: `${line}%` }} />
+        {wbgt !== null && ceiling !== null && <div className="absolute inset-y-0 bg-[#f5b7c3]/60" style={{ left: `${rangeStart}%`, width: `${rangeWidth}%` }} />}
         <div className="absolute -bottom-3 -top-3 w-px bg-white" style={{ left: `${line}%` }} />
-        <div className="absolute top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-white bg-hawk shadow-[0_0_24px_rgba(200,16,46,.9)]" style={{ left: `${marker}%` }} />
+        <div className="absolute top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-white bg-black" style={{ left: `${marker}%` }} />
+        <div className="absolute top-1/2 h-7 w-2 -translate-x-1/2 -translate-y-1/2 bg-[#f5b7c3] shadow-[0_0_24px_rgba(200,16,46,.9)]" style={{ left: `${ceilingMarker}%` }} />
       </div>
-      <div className="mt-4 flex justify-between gap-6 text-[9px] font-semibold tracking-[0.08em] text-white/50">
-        <span>HEAT-PERMITTED SIDE OF UIL LINE</span>
-        <span className="text-right">92.1°F WBGT · NO OUTDOOR PRACTICE</span>
+      <div className="mt-4 grid grid-cols-3 gap-3 text-[9px] font-semibold tracking-[0.08em] text-white/50">
+        <span><i className="mr-2 inline-block h-3 w-3 rounded-full border-2 border-white bg-black align-middle" />NWS {wbgt?.toFixed(1) ?? '—'}°</span>
+        <span className="text-center"><i className="mr-2 inline-block h-3 w-1 bg-[#f5b7c3] align-middle" />CEILING {ceiling?.toFixed(1) ?? '—'}°</span>
+        <span className="text-right">{UIL_NO_PRACTICE_WBGT}° · NO PRACTICE</span>
       </div>
-      <div className="mt-6 flex flex-wrap gap-x-6 gap-y-2 border-t border-white/15 pt-4 text-[10px] text-white/50"><span><strong className="text-white">WBGT</strong> is not air temperature</span><span><strong className="text-white">NWS</strong> predicts the WBGT</span><span><strong className="text-white">UIL</strong> sets the limits</span><span><strong className="text-white">The school</strong> confirms the field reading</span></div>
+      <div className="mt-6 flex flex-wrap gap-x-6 gap-y-2 border-t border-white/15 pt-4 text-[10px] text-white/50"><span><strong className="text-white">Forecast</strong> is the exact-campus NWS value</span><span><strong className="text-white">Ceiling</strong> includes nearby-grid spread + {INCIDENT_SAFETY_ALLOWANCE}°F incident allowance</span><span><strong className="text-white">The school</strong> makes the official call</span></div>
     </div>
   )
 }
@@ -261,37 +268,54 @@ export default function App() {
     setLoading(true)
     setError(null)
     try {
-      let coordinates = FALLBACK_COORDINATES
+      let nearbyCoordinates = FALLBACK_NEARBY_COORDINATES
       try {
         const zipResponse = await fetch(`https://api.zippopotam.us/us/${ZIP_CODE}`)
         if (!zipResponse.ok) throw new Error('ZIP lookup failed')
         const zipData = await zipResponse.json()
-        coordinates = { latitude: Number(zipData.places[0].latitude), longitude: Number(zipData.places[0].longitude) }
-      } catch { /* The Heath center fallback keeps the forecast usable. */ }
+        nearbyCoordinates = { latitude: Number(zipData.places[0].latitude), longitude: Number(zipData.places[0].longitude) }
+      } catch { /* The known Heath ZIP centroid keeps the cross-check usable. */ }
 
-      const pointsResponse = await fetch(`https://api.weather.gov/points/${coordinates.latitude.toFixed(4)},${coordinates.longitude.toFixed(4)}`, { headers: { Accept: 'application/geo+json' } })
-      if (!pointsResponse.ok) throw new Error('The National Weather Service location feed is unavailable.')
+      const [pointsResponse, nearbyPointsResponse] = await Promise.all([
+        fetch(`https://api.weather.gov/points/${PRACTICE_COORDINATES.latitude.toFixed(4)},${PRACTICE_COORDINATES.longitude.toFixed(4)}`, { headers: { Accept: 'application/geo+json' } }),
+        fetch(`https://api.weather.gov/points/${nearbyCoordinates.latitude.toFixed(4)},${nearbyCoordinates.longitude.toFixed(4)}`, { headers: { Accept: 'application/geo+json' } }),
+      ])
+      if (!pointsResponse.ok) throw new Error('The National Weather Service exact-location feed is unavailable.')
       const points = await pointsResponse.json()
+      const nearbyPoints = nearbyPointsResponse.ok ? await nearbyPointsResponse.json() : points
 
-      const [gridResponse, dailyResponse, observation] = await Promise.all([
+      const [gridResponse, nearbyGridResponse, dailyResponse, observation] = await Promise.all([
         fetch(points.properties.forecastGridData, { headers: { Accept: 'application/geo+json' } }),
+        fetch(nearbyPoints.properties.forecastGridData, { headers: { Accept: 'application/geo+json' } }),
         fetch(points.properties.forecast, { headers: { Accept: 'application/geo+json' } }),
         fetchLatestObservation(points.properties.observationStations),
       ])
       if (!gridResponse.ok) throw new Error('The National Weather Service WBGT feed is unavailable.')
       const grid = await gridResponse.json()
+      const nearbyGrid = nearbyGridResponse.ok ? await nearbyGridResponse.json() : grid
       const daily = dailyResponse.ok ? await dailyResponse.json() : null
       const properties = grid.properties
+      const nearbyProperties = nearbyGrid.properties
       const periods: ForecastPeriod[] = daily?.properties?.periods ?? []
+      const modeledCurrentTarget = observation?.time ?? new Date()
+      const modeledCurrentAirTemperature = toFahrenheit(gridValueAt(properties.temperature, modeledCurrentTarget), properties.temperature?.uom)
 
       const outlooks = Array.from({ length: 7 }, (_, index): Outlook => {
         const target = targetForOffset(index, 14, 45)
         const dayPeriod = periods.find((period) => period.isDaytime && dateKey(new Date(period.startTime)) === dateKey(target))
         const wbgt = toFahrenheit(gridValueAt(properties.wetBulbGlobeTemperature, target), properties.wetBulbGlobeTemperature?.uom)
+        const nearbyWbgt = toFahrenheit(gridValueAt(nearbyProperties.wetBulbGlobeTemperature, target), nearbyProperties.wetBulbGlobeTemperature?.uom)
         const gridTemp = toFahrenheit(gridValueAt(properties.temperature, target), properties.temperature?.uom)
         const rainChance = gridValueAt(properties.probabilityOfPrecipitation, target) ?? dayPeriod?.probabilityOfPrecipitation?.value ?? 0
         const humidity = gridValueAt(properties.relativeHumidity, target) ?? dayPeriod?.relativeHumidity?.value ?? 0
         const cloudCover = gridValueAt(properties.skyCover, target) ?? (/cloud/i.test(dayPeriod?.shortForecast ?? '') ? 70 : 18)
+        const prediction = buildPracticePrediction({
+          forecastWbgt: wbgt,
+          nearbyWbgt,
+          observedAirTemperature: observation?.temperature ?? null,
+          modeledCurrentAirTemperature,
+          useLiveSignal: index === 0,
+        })
         const condition = rainChance >= 40
           ? (/thunder/i.test(dayPeriod?.shortForecast ?? '') ? 'Thunderstorms likely' : 'Chance of showers')
           : cloudCover >= 70
@@ -314,19 +338,43 @@ export default function App() {
           humidity,
           wind: dayPeriod?.windSpeed ?? '—',
           cloudCover,
-          flag: wbgt === null ? null : getFlag(wbgt),
+          flag: prediction.planningCeiling === null ? null : getUilFlag(prediction.planningCeiling),
+          nearbyWbgt,
+          prediction,
         }
       })
 
-      setWeather({
+      const sourceUpdatedAt = properties.updateTime ? new Date(properties.updateTime) : null
+      const nextWeather: WeatherState = {
         outlooks,
         currentWbgt: toFahrenheit(gridValueAt(properties.wetBulbGlobeTemperature, new Date()), properties.wetBulbGlobeTemperature?.uom),
         office: points.properties.cwa ?? null,
         gridId: points.properties.forecastGridData.replace('https://api.weather.gov/gridpoints/', ''),
-        coordinates,
+        nearbyGridId: nearbyPoints.properties.forecastGridData.replace('https://api.weather.gov/gridpoints/', ''),
+        coordinates: PRACTICE_COORDINATES,
+        nearbyCoordinates,
         observation,
+        modeledCurrentAirTemperature,
+        sourceUpdatedAt,
         updatedAt: new Date(),
-      })
+      }
+      setWeather(nextWeather)
+
+      try {
+        const storageKey = 'hawks-practice-forecast-history-v1'
+        const stored = JSON.parse(window.localStorage.getItem(storageKey) ?? '[]') as ForecastSnapshot[]
+        const today = outlooks[0]
+        const snapshot: ForecastSnapshot = {
+          capturedAt: nextWeather.updatedAt.toISOString(),
+          sourceUpdatedAt: sourceUpdatedAt?.toISOString() ?? null,
+          target: today.date.toISOString(),
+          forecastWbgt: today.wbgt,
+          nearbyWbgt: today.nearbyWbgt,
+          planningCeiling: today.prediction.planningCeiling,
+          state: today.prediction.state,
+        }
+        window.localStorage.setItem(storageKey, JSON.stringify(mergeForecastHistory(stored, snapshot)))
+      } catch { /* Forecast history is optional when browser storage is unavailable. */ }
     } catch (caught) {
       setWeather(null)
       setError(caught instanceof Error ? caught.message : 'Weather data could not be loaded.')
@@ -369,13 +417,18 @@ export default function App() {
 
   const selected = weather?.outlooks[selectedIndex] ?? null
   const status = selected?.flag ? FLAG_META[selected.flag] : null
-  const accent = status?.color ?? '#C8102E'
+  const accent = selected?.prediction.state === 'likely-on'
+    ? '#61D18B'
+    : selected?.prediction.state === 'watch'
+      ? '#F3C74F'
+      : '#C8102E'
   const questionDay = selectedIndex === 0
     ? 'TODAY'
     : selected
       ? new Intl.DateTimeFormat('en-US', { timeZone: TIME_ZONE, weekday: 'long' }).format(selected.date).toUpperCase()
       : 'TODAY'
   const updated = useMemo(() => weather ? new Intl.DateTimeFormat('en-US', { timeZone: TIME_ZONE, hour: 'numeric', minute: '2-digit' }).format(weather.updatedAt) : '—', [weather])
+  const sourceUpdated = useMemo(() => weather?.sourceUpdatedAt ? new Intl.DateTimeFormat('en-US', { timeZone: TIME_ZONE, hour: 'numeric', minute: '2-digit' }).format(weather.sourceUpdatedAt) : '—', [weather])
   const observationTime = useMemo(() => weather?.observation ? new Intl.DateTimeFormat('en-US', { timeZone: TIME_ZONE, hour: 'numeric', minute: '2-digit' }).format(weather.observation.time) : '—', [weather])
   const heroShift = reduceMotion ? 0 : Math.min(scrollProgress * 68, 68)
   const storyShift = reduceMotion ? 0 : Math.max(-40, Math.min(60, (scrollProgress - 1.1) * 36))
@@ -394,9 +447,9 @@ export default function App() {
         <header className="relative z-20 mx-auto flex w-full max-w-[1600px] items-center justify-between border-b border-white/25 pb-4">
           <HawksMark />
           <div className="hidden items-center gap-7 text-[10px] font-medium tracking-[0.08em] text-white/75 md:flex">
-            <span className="flex items-center gap-2"><MapPin className="h-3.5 w-3.5" /> HEATH, TEXAS · 75032</span>
+            <span className="flex items-center gap-2"><MapPin className="h-3.5 w-3.5" /> ROCKWALL-HEATH CAMPUS</span>
             <span>NWS GRID {weather?.gridId ?? 'FWD / —'}</span>
-            <span>UPDATED {updated}</span>
+            <span>NWS ISSUED {sourceUpdated}</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="hidden items-center gap-2 rounded-full border border-white/25 bg-black/15 px-3 py-2 text-[9px] font-semibold tracking-[0.1em] backdrop-blur-md sm:flex">
@@ -413,42 +466,56 @@ export default function App() {
           <div className="grid gap-7 lg:grid-cols-12 lg:items-end" style={{ transform: `translate3d(0, ${-heroShift * 0.18}px, 0)` }}>
             <div className="lg:col-span-8">
             <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] font-semibold tracking-[0.1em] text-white/75 md:hidden">
-              <span className="flex items-center gap-1.5"><MapPin className="h-3 w-3" /> HEATH · 75032</span>
-              <span>NWS {weather?.office ?? 'FWD'} · UPDATED {updated}</span>
+              <span className="flex items-center gap-1.5"><MapPin className="h-3 w-3" /> RHHS CAMPUS</span>
+              <span>NWS {weather?.office ?? 'FWD'} · ISSUED {sourceUpdated}</span>
             </div>
             <div className="mb-4 flex items-center gap-3 text-[11px] font-semibold tracking-[0.12em]">
               <span className="h-2.5 w-2.5" style={{ backgroundColor: accent }} />
-              HEAT PREDICTION · {plainDecision(selected)} · 2:45–3:00 PM
+              PRACTICE PREDICTOR · {plainDecision(selected)} · 2:45–3:00 PM
             </div>
             <h1 className="max-w-5xl text-[clamp(2.6rem,6.4vw,6.7rem)] font-medium leading-[0.86] tracking-[-0.072em] text-white drop-shadow-[0_2px_18px_rgba(0,0,0,0.38)]">
               IS OUTDOOR PRACTICE<br />LIKELY {questionDay}?
             </h1>
-            <div className="mt-5 flex flex-wrap items-end gap-x-8 gap-y-5">
-              <div className="text-[clamp(7rem,15vw,13.5rem)] font-bold leading-[0.64] tracking-[-0.09em] text-white drop-shadow-[0_4px_25px_rgba(0,0,0,0.32)]">
-                {loading ? '…' : error ? 'CHECK.' : status?.verdict ?? '—'}
+            <div className="mt-6 flex flex-wrap items-end gap-x-8 gap-y-5">
+              <div className="text-[clamp(4.1rem,10.8vw,10.5rem)] font-bold leading-[0.7] tracking-[-0.085em] text-white drop-shadow-[0_4px_25px_rgba(0,0,0,0.32)]">
+                {loading ? '…' : error ? 'CHECK.' : selected?.prediction.headline ?? '—'}
               </div>
             </div>
             </div>
             <div className="lg:col-span-4">
               <div className="border-l-2 pl-5" style={{ borderColor: accent }}>
                 <p className="text-xl font-semibold leading-6">{error ?? predictionReason(selected)}</p>
-                {status && <p className="mt-3 text-sm leading-5 text-white/70">{status.instruction}</p>}
+                <p className="mt-3 text-sm leading-5 text-white/70">This is a planning call, not an official cancellation or approval.</p>
               </div>
               <div className="mt-6 flex max-w-xl items-start gap-3 rounded-xl border border-white/25 bg-black/45 px-4 py-3 text-xs leading-5 text-white/70 backdrop-blur-md">
               <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#f0a9b7]" />
-                <p><strong className="text-white">Prediction only.</strong> The school’s reading near practice time determines the official status.</p>
+                <p><strong className="text-white">The field reading wins.</strong> UIL requires a current reading within 15 minutes before practice and continued checks during practice.</p>
               </div>
             </div>
           </div>
 
           <div className="mt-8" style={{ transform: `translate3d(0, ${heroShift * 0.08}px, 0)` }}>
-            <DecisionMeter wbgt={selected?.wbgt ?? null} day={selected?.day ?? 'Today'} />
+            <DecisionMeter outlook={selected} />
           </div>
+
+          {selected?.prediction.state === 'watch' && (
+            <div className="mt-4 flex items-start gap-3 rounded-2xl border border-[#f3c74f]/60 bg-[#f3c74f] px-5 py-4 text-black shadow-xl">
+              <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0" />
+              <p className="text-sm font-semibold leading-5">Plan for a possible cancellation. The point forecast is below the line, but the conservative ceiling or live conditions are not.</p>
+            </div>
+          )}
+
+          {selected?.prediction.state === 'likely-off' && (
+            <div className="mt-4 flex items-start gap-3 rounded-2xl border border-white/25 bg-hawk px-5 py-4 text-white shadow-xl">
+              <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0" />
+              <p className="text-sm font-semibold leading-5">Plan for no outdoor practice unless the school announces otherwise. The forecast itself reaches the UIL no-practice line.</p>
+            </div>
+          )}
 
           <div className="mt-4 grid gap-4 lg:grid-cols-3">
             <section className="rounded-[1.5rem] border border-white/20 bg-black/50 p-5 backdrop-blur-xl sm:p-6">
               <div className="flex items-center justify-between gap-4">
-                <div><p className="text-[10px] font-semibold tracking-[0.12em] text-[#f0a9b7]">RIGHT NOW</p><h2 className="mt-2 text-2xl font-medium">Current weather</h2></div>
+                <div><p className="text-[10px] font-semibold tracking-[0.12em] text-[#f0a9b7]">1 · RIGHT NOW</p><h2 className="mt-2 text-2xl font-medium">What is happening</h2></div>
                 <span className="text-right text-[9px] leading-4 text-white/45">{weather?.observation?.station ?? 'NWS'}<br />AS OF {observationTime}</span>
               </div>
               <div className="mt-6 grid grid-cols-2 border-y border-white/15 py-5">
@@ -457,14 +524,15 @@ export default function App() {
               </div>
               <div className="mt-5 flex items-center gap-3"><WeatherGlyph condition={weather?.observation?.condition ?? 'Current'} className="h-6 w-6 text-[#ffd278]" /><strong>{weather?.observation?.condition ?? 'Loading conditions'}</strong></div>
               <div className="mt-5 grid grid-cols-2 text-xs"><div><Droplets className="mb-2 h-4 w-4 text-white/45" /><strong>{weather?.observation?.humidity?.toFixed(0) ?? '—'}%</strong><span className="block text-[9px] text-white/40">HUMIDITY</span></div><div><Wind className="mb-2 h-4 w-4 text-white/45" /><strong>{weather?.observation?.wind?.toFixed(0) ?? '—'} mph</strong><span className="block text-[9px] text-white/40">WIND</span></div></div>
-              <p className="mt-5 text-[10px] leading-4 text-white/45">Air temperature comes from the nearest reporting station. Current WBGT is an NWS grid estimate—not the school sensor.</p>
+              {selected?.prediction.liveTemperatureGap !== null && selected?.prediction.liveTemperatureGap !== undefined && <p className={`mt-5 text-xs leading-5 ${selected.prediction.liveWarning ? 'font-semibold text-[#ffd278]' : 'text-white/50'}`}>The station is {Math.abs(selected.prediction.liveTemperatureGap).toFixed(1)}°F {selected.prediction.liveTemperatureGap >= 0 ? 'hotter' : 'cooler'} than the NWS grid expected right now.</p>}
+              <p className="mt-3 text-[10px] leading-4 text-white/45">Air temperature is observed at the nearest reporting station. Current WBGT is modeled at campus, not measured by the school sensor.</p>
             </section>
 
             <section className="rounded-[1.5rem] border border-white/20 bg-black/50 p-5 backdrop-blur-xl sm:p-6">
-              <div><p className="text-[10px] font-semibold tracking-[0.12em] text-[#f0a9b7]">{selected?.day.toUpperCase() ?? 'TODAY'} · AROUND 3 PM</p><h2 className="mt-2 text-2xl font-medium">NWS forecast</h2></div>
+              <div><p className="text-[10px] font-semibold tracking-[0.12em] text-[#f0a9b7]">2 · {selected?.day.toUpperCase() ?? 'TODAY'} AROUND 3 PM</p><h2 className="mt-2 text-2xl font-medium">What NWS predicts</h2></div>
               <div className="mt-6 grid grid-cols-2 border-y border-white/15 py-5">
                 <div><span className="text-[9px] tracking-[0.1em] text-white/45">AIR TEMPERATURE</span><strong className="mt-2 block text-4xl font-medium tracking-[-0.06em]">{selected?.temperature?.toFixed(0) ?? '—'}°</strong></div>
-                <div className="border-l border-white/15 pl-5"><span className="text-[9px] tracking-[0.1em] text-white/45">PREDICTED WBGT</span><strong className="mt-2 block text-4xl font-medium tracking-[-0.06em]">{selected?.wbgt?.toFixed(1) ?? '—'}°</strong></div>
+                <div className="border-l border-white/15 pl-5"><span className="text-[9px] tracking-[0.1em] text-white/45">CAMPUS WBGT</span><strong className="mt-2 block text-4xl font-medium tracking-[-0.06em]">{selected?.wbgt?.toFixed(1) ?? '—'}°</strong></div>
               </div>
               <div className="mt-5 flex items-center gap-3"><WeatherGlyph condition={selected?.condition ?? 'Sunny'} className="h-6 w-6 text-[#ffd278]" /><strong>{selected?.condition ?? 'Loading forecast'}</strong></div>
               <p className="mt-3 text-xs leading-5 text-white/65">{selected?.detail ?? 'Forecast details will appear when the weather service responds.'}</p>
@@ -473,14 +541,15 @@ export default function App() {
               <div><Gauge className="mb-2 h-4 w-4 text-white/55" /><strong>{selected?.humidity.toFixed(0) ?? '—'}%</strong><span className="block text-[10px] text-white/45">HUMIDITY</span></div>
               <div><Wind className="mb-2 h-4 w-4 text-white/55" /><strong>{selected?.wind ?? '—'}</strong><span className="block text-[10px] text-white/45">WIND</span></div>
               </div>
+              <p className="mt-5 text-[10px] leading-4 text-white/45">Surrounding Heath grid cross-check: <strong className="text-white/80">{selected?.nearbyWbgt?.toFixed(1) ?? '—'}°F WBGT</strong>.</p>
             </section>
 
             <section className="rounded-[1.5rem] border border-white/20 bg-white/90 p-5 text-black backdrop-blur-xl sm:p-6">
-              <div><p className="text-[10px] font-semibold tracking-[0.12em] text-hawk">UIL RULES · BASED ON THE FORECAST</p><h2 className="mt-2 text-2xl font-medium">What this would mean</h2></div>
-              <div className="mt-6 border-y border-black/15 py-5"><span className="text-[9px] tracking-[0.1em] text-black/45">HEAT STATUS</span><strong className="mt-2 block text-3xl tracking-[-0.04em]">{selected?.flag === 'black' ? 'No outdoor practice' : 'Heat-permitted'}</strong><span className="mt-2 inline-flex px-2 py-1 text-[10px] font-bold text-white" style={{ backgroundColor: accent }}>{status?.name ?? 'Loading'}</span></div>
+              <div><p className="text-[10px] font-semibold tracking-[0.12em] text-hawk">3 · CONSERVATIVE PLANNING CALL</p><h2 className="mt-2 text-2xl font-medium">What families should plan for</h2></div>
+              <div className="mt-6 border-y border-black/15 py-5"><span className="text-[9px] tracking-[0.1em] text-black/45">PLANNING CEILING</span><strong className="mt-2 block text-5xl tracking-[-0.06em]">{selected?.prediction.planningCeiling?.toFixed(1) ?? '—'}°</strong><span className="mt-2 block text-xl font-semibold">{plainDecision(selected)}</span><span className="mt-3 inline-flex px-2 py-1 text-[10px] font-bold text-white" style={{ backgroundColor: accent }}>{selected?.prediction.state === 'watch' ? 'CANCELLATION RISK' : status?.name ?? 'Loading'}</span></div>
               {status && <ul className="mt-5 grid gap-2 text-sm leading-5 text-black/65">{status.rules.map((rule) => <li key={rule} className="flex gap-2"><span className="font-bold text-hawk">•</span><span>{rule}</span></li>)}</ul>}
               <div className="mt-6 border-t border-black/15 pt-5 text-xs leading-5 text-black/55">
-                This applies the predicted WBGT to UIL’s all-sports Class 3 limits. Rockwall-Heath confirms the official golf status from conditions near practice time.
+                The ceiling uses the hotter local NWS grid plus a temporary {INCIDENT_SAFETY_ALLOWANCE}°F allowance based on the September 16 miss. It is deliberately conservative and is not an official WBGT reading.
               </div>
             </section>
           </div>
@@ -488,11 +557,11 @@ export default function App() {
 
         <div className="relative z-10 mx-auto mt-auto w-full max-w-[1600px] overflow-hidden rounded-[1.5rem] border border-white/15 bg-black/55 shadow-2xl backdrop-blur-xl">
           <div className="flex items-center justify-between border-b border-white/10 px-5 py-3">
-            <div className="text-[10px] font-semibold tracking-[0.12em]">SEVEN-DAY HEAT PRACTICE PREDICTION</div>
-            <div className="text-[10px] text-white/45">SELECT A DAY · 3:00 PM</div>
+            <div className="text-[10px] font-semibold tracking-[0.12em]">SEVEN-DAY PRACTICE RISK</div>
+            <div className="text-[10px] text-white/45">SELECT A DAY · 2:45–3:00 PM</div>
           </div>
           <div className="flex snap-x overflow-x-auto sm:grid sm:grid-cols-7 sm:overflow-visible">
-            {(weather?.outlooks ?? Array.from({ length: 7 }, (_, index) => ({ day: index === 0 ? 'Today' : '—', dateLabel: '', wbgt: null, condition: 'Sunny', flag: null } as Outlook))).map((outlook, index) => {
+            {(weather?.outlooks ?? []).map((outlook, index) => {
               const meta = outlook.flag ? FLAG_META[outlook.flag] : null
               return (
                 <button
@@ -505,9 +574,10 @@ export default function App() {
                   <span className="text-xs font-semibold">{outlook.day}</span>
                   <span className="ml-2 text-[10px] text-white/40">{outlook.dateLabel}</span>
                   <WeatherGlyph condition={outlook.condition} className="my-3 h-5 w-5 text-white/80" />
-                  <span className="block text-xl font-medium tracking-[-0.05em]">{outlook.wbgt?.toFixed(1) ?? '—'}° <small className="text-[8px] font-semibold tracking-[0.08em] text-white/40">WBGT</small></span>
+                  <span className="block text-xl font-medium tracking-[-0.05em]">{outlook.prediction.planningCeiling?.toFixed(1) ?? '—'}° <small className="text-[8px] font-semibold tracking-[0.08em] text-white/40">CEILING</small></span>
+                  <span className="mt-0.5 block text-[9px] text-white/45">NWS {outlook.wbgt?.toFixed(1) ?? '—'}°</span>
                   <span className="mt-1 block text-[10px] font-medium" style={{ color: meta?.color ?? 'rgba(255,255,255,.45)' }}>{plainDecision(outlook)}</span>
-                  {outlook.wbgt !== null && <span className="mt-1 block text-[9px] text-white/45">{outlook.wbgt >= 92.1 ? `${(outlook.wbgt - 92.1).toFixed(1)}° OVER LIMIT` : `${(92.1 - outlook.wbgt).toFixed(1)}° TO NO`}</span>}
+                  {outlook.prediction.ceilingMargin !== null && <span className="mt-1 block text-[9px] text-white/45">{outlook.prediction.ceilingMargin <= 0 ? `${Math.abs(outlook.prediction.ceilingMargin).toFixed(1)}° OVER LINE` : `${outlook.prediction.ceilingMargin.toFixed(1)}° BELOW LINE`}</span>}
                 </button>
               )
             })}
@@ -516,7 +586,7 @@ export default function App() {
 
         <div className="relative z-10 mx-auto mt-3 flex w-full max-w-[1600px] justify-between px-1 text-[9px] text-white/45">
           <span>{weather?.observation ? `${weather.observation.stationName.toUpperCase()} · ${observationTime}` : 'CURRENT STATION LOADING'}</span>
-          <span>NWS FORECAST · UIL CLASS 3 GUIDANCE</span>
+          <span>EXACT CAMPUS + NEARBY GRID + LIVE STATION · UIL CLASS 3</span>
         </div>
       </section>
 
@@ -558,7 +628,7 @@ export default function App() {
             <p className="mt-8 max-w-md text-base leading-7 text-white/65">That is why this page keeps checking. The week gives families a useful signal; the school’s near-practice reading reflects the actual field.</p>
           </div>
           <div className="grid gap-4 self-end lg:col-span-4 lg:col-start-9">
-            <div className="rounded-[1.5rem] border border-white/20 bg-black/40 p-6 backdrop-blur-xl"><Database className="h-6 w-6 text-[#f0a9b7]" /><p className="mt-10 text-[10px] font-bold tracking-[0.12em] text-white/45">THE PREDICTOR KNOWS</p><h3 className="mt-2 text-2xl font-medium">The heat outlook</h3><ul className="mt-4 grid gap-2 text-sm leading-5 text-white/60"><li>• NWS forecast WBGT</li><li>• UIL Class 3 restriction bands</li><li>• Distance from the no-practice line</li><li>• Seven-day heat trend</li></ul></div>
+            <div className="rounded-[1.5rem] border border-white/20 bg-black/40 p-6 backdrop-blur-xl"><Database className="h-6 w-6 text-[#f0a9b7]" /><p className="mt-10 text-[10px] font-bold tracking-[0.12em] text-white/45">THE PREDICTOR KNOWS</p><h3 className="mt-2 text-2xl font-medium">The planning risk</h3><ul className="mt-4 grid gap-2 text-sm leading-5 text-white/60"><li>• Exact-campus NWS WBGT</li><li>• A surrounding-grid cross-check</li><li>• Nearest live station versus model</li><li>• Conservative ceiling and UIL line</li></ul></div>
             <div className="rounded-[1.5rem] border border-white/20 bg-white/90 p-6 text-black backdrop-blur-xl"><ShieldCheck className="h-6 w-6 text-hawk" /><p className="mt-10 text-[10px] font-bold tracking-[0.12em] text-black/45">THE PREDICTOR CANNOT KNOW</p><h3 className="mt-2 text-2xl font-medium">The official status</h3><ul className="mt-4 grid gap-2 text-sm leading-5 text-black/60"><li>• The school’s exact field reading</li><li>• Lightning, air quality or field closures</li><li>• Athlete condition or cumulative workload</li><li>• Coach, trainer or campus decisions</li></ul></div>
           </div>
         </div>
@@ -574,13 +644,13 @@ export default function App() {
             </div>
             <div className="lg:col-span-7">
               <div className="grid border-t border-black/20 sm:grid-cols-2">
-                <div className="border-b border-black/15 py-6 sm:border-r sm:pr-6"><MapPin className="h-5 w-5 text-hawk" /><span className="mt-6 block text-[10px] font-bold tracking-[0.12em] text-black/45">LOCATION</span><strong className="mt-2 block text-xl">Heath / Rockwall · 75032</strong><span className="mt-1 block text-xs text-black/50">{weather ? `${weather.coordinates.latitude.toFixed(4)}, ${weather.coordinates.longitude.toFixed(4)}` : 'ZIP centroid loading'}</span></div>
-                <div className="border-b border-black/15 py-6 sm:pl-6"><Database className="h-5 w-5 text-hawk" /><span className="mt-6 block text-[10px] font-bold tracking-[0.12em] text-black/45">FORECAST SOURCE</span><strong className="mt-2 block text-xl">National Weather Service</strong><span className="mt-1 block text-xs text-black/50">Office {weather?.office ?? 'FWD'} · grid {weather?.gridId ?? 'loading'}</span></div>
+                <div className="border-b border-black/15 py-6 sm:border-r sm:pr-6"><MapPin className="h-5 w-5 text-hawk" /><span className="mt-6 block text-[10px] font-bold tracking-[0.12em] text-black/45">PRACTICE LOCATION</span><strong className="mt-2 block text-xl">{PRACTICE_LOCATION_NAME}</strong><span className="mt-1 block text-xs text-black/50">{weather ? `${weather.coordinates.latitude.toFixed(4)}, ${weather.coordinates.longitude.toFixed(4)}` : 'Exact coordinates loading'}</span></div>
+                <div className="border-b border-black/15 py-6 sm:pl-6"><Database className="h-5 w-5 text-hawk" /><span className="mt-6 block text-[10px] font-bold tracking-[0.12em] text-black/45">FORECAST SIGNALS</span><strong className="mt-2 block text-xl">Exact campus + surrounding Heath</strong><span className="mt-1 block text-xs text-black/50">NWS grids {weather?.gridId ?? 'loading'} + {weather?.nearbyGridId ?? 'loading'}</span></div>
                 <div className="border-b border-black/15 py-6 sm:border-r sm:pr-6"><CheckCircle2 className="h-5 w-5 text-hawk" /><span className="mt-6 block text-[10px] font-bold tracking-[0.12em] text-black/45">NEAREST OBSERVATION</span><strong className="mt-2 block text-xl">{weather?.observation?.stationName ?? 'Loading station'}</strong><span className="mt-1 block text-xs text-black/50">{weather?.observation ? `${weather.observation.station} · ${observationTime} · ${weather.observation.temperature?.toFixed(0) ?? '—'}°F` : 'Live observation unavailable'}</span></div>
-                <div className="border-b border-black/15 py-6 sm:pl-6"><RefreshCw className="h-5 w-5 text-hawk" /><span className="mt-6 block text-[10px] font-bold tracking-[0.12em] text-black/45">FRESHNESS</span><strong className="mt-2 block text-xl">Automatic · every 5 minutes</strong><span className="mt-1 block text-xs text-black/50">Last checked {updated}</span></div>
+                <div className="border-b border-black/15 py-6 sm:pl-6"><RefreshCw className="h-5 w-5 text-hawk" /><span className="mt-6 block text-[10px] font-bold tracking-[0.12em] text-black/45">FRESHNESS</span><strong className="mt-2 block text-xl">NWS issued {sourceUpdated}</strong><span className="mt-1 block text-xs text-black/50">This browser checked at {updated}. NWS may not publish new forecast data every five minutes.</span></div>
               </div>
-              <p className="mt-7 max-w-2xl text-sm leading-6 text-black/60">Different weather apps can disagree by a few degrees because they use different station locations, update times and forecast models. This page consistently uses the NWS grid for ZIP 75032 so the heat prediction and its threshold stay comparable. Rain and sky conditions are shown for context, but they do not change the heat-based YES/NO prediction.</p>
-              <a href="https://www.weather.gov/news/211009-WBGT" target="_blank" rel="noreferrer" className="mt-6 inline-flex items-center gap-2 border-b border-black pb-1 text-xs font-bold tracking-[0.08em]">HOW NWS CALCULATES WBGT <ExternalLink className="h-3.5 w-3.5" /></a>
+              <p className="mt-7 max-w-2xl text-sm leading-6 text-black/60">The predictor now anchors the forecast to the Rockwall-Heath campus, checks the surrounding Heath grid, and compares the nearest live station with what the model expected at that moment. The planning ceiling then adds a clearly labeled {INCIDENT_SAFETY_ALLOWANCE}°F safety allowance because the September 16 forecast missed the school’s cancellation reading by at least several degrees. One incident is not enough to call this a permanent correction.</p>
+              <div className="mt-6 flex flex-wrap gap-6"><a href="https://www.weather.gov/news/211009-WBGT" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 border-b border-black pb-1 text-xs font-bold tracking-[0.08em]">HOW NWS CALCULATES WBGT <ExternalLink className="h-3.5 w-3.5" /></a><a href="https://convergence.unc.edu/tools/wbgt/" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 border-b border-black pb-1 text-xs font-bold tracking-[0.08em]">WHY WBGT FORECASTS VARY <ExternalLink className="h-3.5 w-3.5" /></a></div>
             </div>
           </div>
 
